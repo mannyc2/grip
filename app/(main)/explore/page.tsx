@@ -1,8 +1,8 @@
 import { getAllBounties } from '@/lib/db/queries/bounties';
 import { getTopReposByBountyValue } from '@/lib/db/queries/repo-settings';
-import { TopRepos } from './_components/top-repos';
 import { RecentActivity } from './_components/recent-activity';
 import type { TopRepo } from './_components/repo-card';
+import { TopRepos } from './_components/top-repos';
 
 /**
  * Explore Page - Browse bounties and discover projects
@@ -29,7 +29,7 @@ export default async function ExplorePage() {
 
   // Calculate stats (totalFunded is BigInt, sum as BigInt then convert to number for display)
   const totalValueBigInt = openBounties.reduce((sum, b) => sum + b.totalFunded, BigInt(0));
-  const totalValue = Number(totalValueBigInt / BigInt(1000000)); // Convert from 6 decimals to whole number
+  const totalValue = Number(BigInt(totalValueBigInt) / BigInt(1000000)); // Convert from 6 decimals to whole number
 
   // Transform top repos data to match TopRepo interface
   const topRepos: TopRepo[] = topReposData.map((r) => ({
