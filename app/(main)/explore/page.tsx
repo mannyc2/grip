@@ -29,7 +29,7 @@ export default async function ExplorePage() {
 
   // Calculate stats (totalFunded is BigInt, sum as BigInt then convert to number for display)
   const totalValueBigInt = openBounties.reduce((sum, b) => sum + b.totalFunded, BigInt(0));
-  const totalValue = Number(totalValueBigInt / BigInt(1000000)); // Convert from 6 decimals to whole number
+  const totalValue = Number(BigInt(totalValueBigInt) / BigInt(1000000)); // Convert from 6 decimals to whole number
 
   // Transform top repos data to match TopRepo interface
   const topRepos: TopRepo[] = topReposData.map((r) => ({

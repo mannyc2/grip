@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation';
 import { getSession } from '@/lib/auth-server';
 import { getUserByName, getBountyDataByGitHubId } from '@/lib/db/queries/users';
 import { fetchGitHubUser, fetchGitHubUserActivity } from '@/lib/github/user';
+import { getUserWallet } from '@/lib/db/queries/passkeys';
 import { UserProfile } from './_components/user-profile';
 
 interface UserProfilePageProps {
