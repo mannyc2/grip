@@ -107,9 +107,6 @@ export type PayoutStatus = (typeof payoutStatuses)[number];
 export const paymentTypes = ['bounty', 'direct'] as const;
 export type PaymentType = (typeof paymentTypes)[number];
 
-export const custodialWalletStatuses = ['pending', 'claimed', 'expired'] as const;
-export type CustodialWalletStatus = (typeof custodialWalletStatuses)[number];
-
 export const accessKeyStatuses = ['active', 'revoked', 'expired'] as const;
 export type AccessKeyStatus = (typeof accessKeyStatuses)[number];
 
@@ -511,64 +508,92 @@ export const payouts = pgTable(
 );
 
 /**
- * Custodial Wallets table
+ * Pending Payments table
  *
- * Turnkey-managed wallets for contributors who don't have BountyLane accounts yet.
- * When a funder approves a bounty for a contributor without a wallet, we:
- * 1. Create a Turnkey wallet for them (identified by GitHub user ID)
- * 2. Send payment immediately to that wallet
- * 3. Store claim token for later retrieval
- * 4. When contributor signs up, they claim funds and transfer to their passkey wallet
+ * Payment commitments for contributors without accounts yet.
+ * Replaces custodial wallet pattern - funds stay in funder's wallet until claimed.
+ *
+ * When a funder approves a bounty for a contributor without an account:
+ * 1. Create dedicated Access Key with exact payment amount limit
+ * 2. Create pending payment record with claim token
+ * 3. Funds stay in funder's wallet (no custody)
+ * 4. When contributor signs up, they claim and batch-process all pending payments
+ *
+ * Status values:
+ * - pending: Awaiting claim by contributor
+ * - claimed: Contributor claimed and payment executed
+ * - expired: Claim period expired (1 year)
+ * - cancelled: Funder cancelled or insufficient funds
  */
-export const custodialWallets = pgTable(
-  'custodial_wallets',
+export const pendingPaymentStatuses = ['pending', 'claimed', 'expired', 'cancelled'] as const;
+export type PendingPaymentStatus = (typeof pendingPaymentStatuses)[number];
+
+export const pendingPayments = pgTable(
+  'pending_payments',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     network: varchar('network', { length: 10, enum: tempoNetworks }).notNull(),
 
-    // GitHub identity (for matching when user signs up)
-    githubUserId: i64('github_user_id').notNull(),
-    githubUsername: varchar('github_username', { length: 39 }).notNull(),
+    // Context (nullable for direct payments)
+    // For bounty payments: both bountyId and submissionId are set
+    // For direct payments: both are NULL (no bounty context)
+    // CHECK constraint enforces: both set OR both NULL (no mixing)
+    bountyId: uuid('bounty_id').references(() => bounties.id, { onDelete: 'cascade' }),
+    submissionId: uuid('submission_id').references(() => submissions.id, { onDelete: 'cascade' }),
 
-    // Turnkey wallet details
-    turnkeyWalletId: varchar('turnkey_wallet_id', { length: 255 }).notNull().unique(),
-    turnkeyAccountId: varchar('turnkey_account_id', { length: 255 }).notNull(),
-    address: varchar('address', { length: 42 }).notNull(),
+    // Parties
+    funderId: text('funder_id')
+      .notNull()
+      .references(() => user.id),
+    recipientGithubUserId: i64('recipient_github_user_id').notNull(),
+    recipientGithubUsername: varchar('recipient_github_username', { length: 39 }).notNull(),
 
-    // Claim flow (secure token + expiration)
+    // Payment details
+    amount: u256('amount').notNull(),
+    tokenAddress: varchar('token_address', { length: 42 }).notNull(),
+
+    // Dedicated Access Key for this payment only
+    dedicatedAccessKeyId: uuid('dedicated_access_key_id')
+      .notNull()
+      .references(() => accessKeys.id),
+
+    // Claim mechanism
     claimToken: varchar('claim_token', { length: 64 }).notNull().unique(),
     claimExpiresAt: timestamp('claim_expires_at', { mode: 'string' }).notNull(),
     claimedAt: timestamp('claimed_at', { mode: 'string' }),
+    claimedByUserId: text('claimed_by_user_id').references(() => user.id),
+    payoutId: uuid('payout_id').references(() => payouts.id),
 
-    // User linkage (set when claimed)
-    userId: text('user_id').references(() => user.id),
-    transferredToPasskeyId: text('transferred_to_passkey_id').references(() => passkey.id),
-    transferTxHash: varchar('transfer_tx_hash', { length: 66 }),
-
-    // Status tracking
-    // 'pending' - Wallet created, awaiting claim
-    // 'claimed' - Funds transferred to user's passkey wallet
-    // 'expired' - Claim period expired (checked lazily, no cron)
-    status: varchar('status', { length: 20, enum: custodialWalletStatuses })
+    // Status: 'pending' | 'claimed' | 'expired' | 'cancelled'
+    status: varchar('status', { length: 20, enum: pendingPaymentStatuses })
       .default('pending')
       .notNull(),
 
-    createdAt: timestamp('created_at', { mode: 'string' }).defaultNow(),
+    createdAt: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
     updatedAt: timestamp('updated_at', { mode: 'string' })
       .defaultNow()
-      .$onUpdate(() => new Date().toISOString()),
+      .$onUpdate(() => new Date().toISOString())
+      .notNull(),
   },
   (table) => ({
-    idxCustodialWalletsGithubUser: index('idx_custodial_wallets_github_user').on(
+    fkToken: foreignKey({
+      columns: [table.tokenAddress, table.network],
+      foreignColumns: [tokens.address, tokens.network],
+    }),
+    idxPendingPaymentsGithubUser: index('idx_pending_payments_github_user').on(
       table.network,
-      table.githubUserId
-    ),
-    idxCustodialWalletsClaimToken: index('idx_custodial_wallets_claim_token').on(table.claimToken),
-    idxCustodialWalletsStatus: index('idx_custodial_wallets_status').on(
-      table.network,
+      table.recipientGithubUserId,
       table.status
     ),
-    idxCustodialWalletsAddress: index('idx_custodial_wallets_address').on(table.address),
+    idxPendingPaymentsFunder: index('idx_pending_payments_funder').on(
+      table.funderId,
+      table.status,
+      table.network
+    ),
+    idxPendingPaymentsClaimToken: index('idx_pending_payments_claim_token').on(table.claimToken),
+    // CHECK constraint: either both bountyId/submissionId are set (bounty payment)
+    // or both are NULL (direct payment) - no mixing allowed
+    chkPendingPaymentsContext: sql`CHECK ((${table.bountyId} IS NOT NULL AND ${table.submissionId} IS NOT NULL) OR (${table.bountyId} IS NULL AND ${table.submissionId} IS NULL))`,
   })
 );
 
@@ -712,6 +737,11 @@ export const accessKeys = pgTable(
     // Metadata
     label: varchar('label', { length: 100 }),
     lastUsedAt: timestamp('last_used_at', { mode: 'string' }),
+
+    // Dedicated Access Key (single-use for pending payments)
+    // Dedicated keys are created per-payment with exact amount limits
+    // Non-dedicated (global) keys are reusable for multiple bounties
+    isDedicated: boolean('is_dedicated').default(false).notNull(),
 
     createdAt: timestamp('created_at', { mode: 'string' }).defaultNow(),
     updatedAt: timestamp('updated_at', { mode: 'string' })

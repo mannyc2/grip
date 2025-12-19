@@ -11,14 +11,15 @@ import { authClient } from '@/lib/auth/auth-client';
  */
 
 type ClaimLoginPromptProps = {
-  custodialWallet: {
-    githubUsername: string;
-    address: string;
+  pendingPayment: {
+    recipientGithubUsername: string;
+    amount: bigint;
+    tokenAddress: string;
   };
   returnUrl: string;
 };
 
-export function ClaimLoginPrompt({ custodialWallet, returnUrl }: ClaimLoginPromptProps) {
+export function ClaimLoginPrompt({ pendingPayment, returnUrl }: ClaimLoginPromptProps) {
   const handleGitHubLogin = async () => {
     await authClient.signIn.social({
       provider: 'github',
@@ -43,9 +44,9 @@ export function ClaimLoginPrompt({ custodialWallet, returnUrl }: ClaimLoginPromp
 
           <div className="w-full rounded-lg bg-muted p-4 gap-2">
             <p className="body-sm text-muted-foreground">Payment for:</p>
-            <p className="body-base font-medium">@{custodialWallet.githubUsername}</p>
-            <p className="body-sm text-muted-foreground mt-2">Held in secure wallet:</p>
-            <p className="font-mono body-sm break-all">{custodialWallet.address}</p>
+            <p className="body-base font-medium">@{pendingPayment.recipientGithubUsername}</p>
+            <p className="body-sm text-muted-foreground mt-2">Status:</p>
+            <p className="body-sm">Pending - funds will transfer when you claim</p>
           </div>
 
           <Button onClick={handleGitHubLogin} className="w-full" size="lg">

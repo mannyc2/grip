@@ -240,7 +240,8 @@ export type NotificationType =
   | 'submission_expired' // renamed from claim_expired
   | 'direct_payment_sent'
   | 'direct_payment_received'
-  | 'custodial_payment_sent';
+  | 'custodial_payment_sent'
+  | 'pending_payment_created'; // Pending payment awaiting claim
 
 /**
  * Notification metadata - discriminated union by type
@@ -325,6 +326,16 @@ export type NotificationMetadata =
       amount: string; // BigInt serialized as string
       message: string;
       txHash: string;
+    }
+  | {
+      type: 'pending_payment_created';
+      amount: string; // BigInt serialized as string
+      tokenAddress: string;
+      claimUrl: string;
+      claimExpiresAt: string;
+      funderName: string;
+      bountyId?: string; // Optional: only for bounty payments
+      bountyTitle?: string; // Optional: only for bounty payments
     };
 
 /**

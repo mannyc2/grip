@@ -15,6 +15,7 @@ import {
 import { notifyPrApproved } from '@/lib/notifications';
 import { buildPayoutTransaction, encodeBountyMemo } from '@/lib/tempo';
 import { tempoClient } from '@/lib/tempo/client';
+import { TEMPO_CHAIN_ID } from '@/lib/tempo/constants';
 import { broadcastTransaction, signTransactionWithAccessKey } from '@/lib/tempo/keychain-signing';
 import { and, eq } from 'drizzle-orm';
 import { type NextRequest, NextResponse } from 'next/server';
@@ -304,15 +305,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
       });
     }
 
-    // Branch 2: Contributor has NO wallet → Custodial flow
+    // Branch 2: Contributor has NO wallet → Pending Payment flow
 
-    // Import custodial wallet functions
-    const { getCustodialWalletByGithubUserId, createCustodialWalletRecord } = await import(
-      '@/db/queries/custodial-wallets'
-    );
-    const { createCustodialWallet } = await import('@/lib/turnkey/custodial-wallets');
+    console.log('[approve] Contributor has no wallet - creating pending payment');
 
-    // Get GitHub user info from submission
+    // Get GitHub user info
     const submissionDetails = await getSubmissionWithDetails(submissionToApprove.id);
     if (!submissionDetails) {
       return NextResponse.json({ error: 'Failed to get submission details' }, { status: 500 });
@@ -323,222 +320,147 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     if (!githubUserId) {
       return NextResponse.json(
-        { error: 'Cannot create custodial wallet: GitHub user ID not found' },
+        { error: 'Cannot create pending payment: GitHub user ID not found' },
         { status: 400 }
       );
     }
 
-    // Check if custodial wallet already exists for this GitHub user
-    let custodialWallet = await getCustodialWalletByGithubUserId(githubUserId);
+    // Parse Access Key signature from request body
+    const { accessKeySignature, accessKeyAuthHash } = body as {
+      accessKeySignature?: string;
+      accessKeyAuthHash?: string;
+    };
 
-    if (!custodialWallet) {
-      try {
-        console.log(`[approve] Creating custodial wallet for GitHub user ${githubUserId}`);
+    if (!accessKeySignature || !accessKeyAuthHash) {
+      // Return response indicating frontend needs to collect signature
+      return NextResponse.json(
+        {
+          requiresAccessKeySignature: true,
+          payment: {
+            amount: bounty.totalFunded.toString(),
+            tokenAddress: bounty.tokenAddress,
+            recipientGithubUsername: githubUsername,
+            recipientGithubUserId: githubUserId.toString(),
+          },
+        },
+        { status: 400 }
+      );
+    }
 
-        // Create new Turnkey wallet
-        const { walletId, accountId, address } = await createCustodialWallet({
-          githubUserId: Number(githubUserId),
-          githubUsername,
-        });
+    try {
+      // Check balance before creating pending payment
+      // Prevents bad UX: contributor claim fails on-chain if funder has insufficient balance
+      const funderWallet = await getUserWallet(session.user.id);
+      if (!funderWallet?.tempoAddress) {
+        return NextResponse.json({ error: 'Funder wallet not found' }, { status: 400 });
+      }
 
-        // Generate claim token (256-bit random)
-        const crypto = await import('node:crypto');
-        const claimToken = crypto.randomBytes(32).toString('hex');
-        const claimExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year
+      const { checkSufficientBalance } = await import('@/lib/tempo/balance');
+      const balanceCheck = await checkSufficientBalance({
+        funderId: session.user.id,
+        walletAddress: funderWallet.tempoAddress,
+        tokenAddress: bounty.tokenAddress,
+        newAmount: bounty.totalFunded,
+      });
 
-        // Store in database
-        custodialWallet = await createCustodialWalletRecord({
-          githubUserId,
-          githubUsername,
-          turnkeyWalletId: walletId,
-          turnkeyAccountId: accountId,
-          address,
-          claimToken,
-          claimExpiresAt,
-        });
+      if (!balanceCheck.sufficient) {
+        // Format amounts for error message (assuming 6 decimals for USDC)
+        const balanceFormatted = (Number(balanceCheck.balance) / 1_000_000).toFixed(2);
+        const requiredFormatted = (Number(balanceCheck.totalLiabilities) / 1_000_000).toFixed(2);
+        const shortfallFormatted = (
+          Number(balanceCheck.totalLiabilities - balanceCheck.balance) / 1_000_000
+        ).toFixed(2);
 
-        console.log(`[approve] Custodial wallet created: ${address}`);
-      } catch (error) {
-        console.error('[approve] Failed to create custodial wallet:', error);
         return NextResponse.json(
-          { error: 'Failed to create custodial wallet for contributor' },
-          { status: 500 }
+          {
+            error: 'Insufficient balance for pending payment',
+            details: {
+              message: `You have $${balanceFormatted} USDC but need $${requiredFormatted} USDC (including existing pending payments). Please fund your wallet with at least $${shortfallFormatted} USDC more.`,
+              balance: balanceCheck.balance.toString(),
+              required: balanceCheck.totalLiabilities.toString(),
+              shortfall: (balanceCheck.totalLiabilities - balanceCheck.balance).toString(),
+            },
+          },
+          { status: 400 }
         );
       }
-    }
 
-    // Approve submission
-    await approveBountySubmissionAsFunder(submissionToApprove.id, session.user.id, false);
-
-    // Notify contributor that PR was approved
-    try {
-      await notifyPrApproved({
-        claimantId: submissionToApprove.userId,
-        bountyId: bounty.id,
-        bountyTitle: bounty.title,
-        amount: bounty.totalFunded.toString(),
+      // Create dedicated Access Key
+      const { createDedicatedAccessKey } = await import('@/lib/tempo/dedicated-access-keys');
+      const dedicatedKey = await createDedicatedAccessKey({
+        userId: session.user.id,
         tokenAddress: bounty.tokenAddress,
-        repoFullName: bounty.githubFullName ?? 'unknown/unknown',
-        repoOwner: bounty.githubOwner ?? 'unknown',
-        repoName: bounty.githubRepo ?? 'unknown',
+        amount: bounty.totalFunded,
+        authorizationSignature: accessKeySignature,
+        authorizationHash: accessKeyAuthHash,
+        chainId: TEMPO_CHAIN_ID,
+      });
+
+      console.log(`[approve] Created dedicated Access Key: ${dedicatedKey.id}`);
+
+      // Create pending payment
+      const { createPendingPayment } = await import('@/db/queries/pending-payments');
+      const pendingPayment = await createPendingPayment({
+        bountyId: bounty.id,
+        submissionId: submissionToApprove.id,
+        funderId: session.user.id,
+        recipientGithubUserId: Number(githubUserId),
+        recipientGithubUsername: githubUsername,
+        amount: bounty.totalFunded,
+        tokenAddress: bounty.tokenAddress,
+        dedicatedAccessKeyId: dedicatedKey.id,
+      });
+
+      console.log(`[approve] Created pending payment: ${pendingPayment.id}`);
+
+      // Approve submission
+      await approveBountySubmissionAsFunder(submissionToApprove.id, session.user.id, false);
+
+      // Send pending payment notification (if contributor has account)
+      // Design Decision: Only notify if contributor already has BountyLane account (but no wallet)
+      // - New users won't see notification anyway (not logged in)
+      // - Funder gets claim URL in response for manual sharing
+      try {
+        const { getUserByName } = await import('@/db/queries/users');
+        const recipientUser = await getUserByName(githubUsername);
+
+        if (recipientUser) {
+          // Recipient has account but no wallet - notify them
+          const { notifyPendingPaymentCreated } = await import('@/lib/notifications');
+          await notifyPendingPaymentCreated({
+            recipientId: recipientUser.id,
+            funderName: session.user.name ?? 'Someone',
+            amount: bounty.totalFunded.toString(),
+            tokenAddress: bounty.tokenAddress,
+            claimUrl: `${process.env.NEXT_PUBLIC_APP_URL}/claim/${pendingPayment.claimToken}`,
+            claimExpiresAt: pendingPayment.claimExpiresAt,
+            bountyId: bounty.id,
+            bountyTitle: bounty.title,
+          });
+        }
+      } catch (error) {
+        console.error('[approve] Failed to send pending payment notification:', error);
+      }
+
+      return NextResponse.json({
+        success: true,
+        message: 'Payment authorized. Share the claim link with the contributor.',
+        pendingPayment: {
+          id: pendingPayment.id,
+          amount: pendingPayment.amount.toString(),
+          tokenAddress: pendingPayment.tokenAddress,
+          claimUrl: `${process.env.NEXT_PUBLIC_APP_URL}/claim/${pendingPayment.claimToken}`,
+          claimExpiresAt: pendingPayment.claimExpiresAt,
+        },
+        contributor: {
+          githubUserId: githubUserId.toString(),
+          githubUsername,
+        },
       });
     } catch (error) {
-      console.error('[approve] Failed to create PR approved notification:', error);
+      console.error('[approve] Failed to create pending payment:', error);
+      return NextResponse.json({ error: 'Failed to create pending payment' }, { status: 500 });
     }
-
-    // Create payout pointing to custodial wallet
-    const payout = await createPayout({
-      submissionId: submissionToApprove.id,
-      bountyId: bounty.id,
-      recipientUserId: submissionToApprove.userId,
-      payerUserId: bounty.primaryFunderId,
-      recipientPasskeyId: null, // No passkey yet
-      recipientAddress: custodialWallet.address,
-      amount: bounty.totalFunded,
-      tokenAddress: bounty.tokenAddress,
-      custodialWalletId: custodialWallet.id,
-      isCustodial: true,
-      memoIssueNumber: bounty.githubIssueNumber,
-      memoPrNumber: submissionToApprove.githubPrNumber ?? undefined,
-      memoContributor: githubUsername,
-    });
-
-    // Build transaction params
-    const txParams = buildPayoutTransaction({
-      tokenAddress: bounty.tokenAddress as `0x${string}`,
-      recipientAddress: custodialWallet.address as `0x${string}`,
-      amount: BigInt(bounty.totalFunded.toString()),
-      issueNumber: bounty.githubIssueNumber,
-      prNumber: submissionToApprove.githubPrNumber ?? 0,
-      username: githubUsername,
-    });
-
-    const memo = encodeBountyMemo({
-      issueNumber: bounty.githubIssueNumber,
-      prNumber: submissionToApprove.githubPrNumber ?? 0,
-      username: githubUsername,
-    });
-
-    // Try Access Key auto-signing (same as normal flow)
-    if (useAccessKey) {
-      const network = getNetworkForInsert();
-
-      const activeKey = await db.query.accessKeys.findFirst({
-        where: and(
-          eq(accessKeys.userId, session.user.id),
-          eq(accessKeys.network, network),
-          eq(accessKeys.status, 'active')
-        ),
-      });
-
-      if (activeKey) {
-        try {
-          console.log(
-            '[approve] Found active Access Key, attempting auto-sign for custodial payment...'
-          );
-
-          const funderWallet = await getUserWallet(session.user.id);
-          if (!funderWallet?.tempoAddress) {
-            throw new Error('Funder wallet not found');
-          }
-
-          const nonce = BigInt(
-            await tempoClient.getTransactionCount({
-              address: funderWallet.tempoAddress as `0x${string}`,
-              blockTag: 'pending',
-            })
-          );
-
-          const { rawTransaction } = await signTransactionWithAccessKey({
-            tx: {
-              to: txParams.to,
-              data: txParams.data,
-              value: txParams.value,
-              nonce,
-            },
-            funderAddress: funderWallet.tempoAddress as `0x${string}`,
-            network: network as 'testnet' | 'mainnet',
-          });
-
-          const txHash = await broadcastTransaction(rawTransaction);
-
-          console.log('[approve] Custodial payment broadcast successful:', txHash);
-
-          await updatePayoutStatus(payout.id, 'pending', { txHash });
-
-          await db.insert(activityLog).values({
-            eventType: 'access_key_created',
-            network,
-            userId: session.user.id,
-            bountyId: bounty.id,
-            payoutId: payout.id,
-            metadata: {
-              accessKeyId: activeKey.id,
-              backendWalletAddress: activeKey.backendWalletAddress,
-              tokenAddress: bounty.tokenAddress,
-              amount: bounty.totalFunded.toString(),
-              txHash,
-              custodial: true,
-            },
-          });
-
-          await db
-            .update(accessKeys)
-            .set({ lastUsedAt: new Date().toISOString() })
-            .where(eq(accessKeys.id, activeKey.id));
-
-          return NextResponse.json({
-            message: 'Payment sent to custodial wallet. Contributor can claim when they sign up.',
-            custodial: true,
-            autoSigned: true,
-            payout: {
-              id: payout.id,
-              status: 'pending',
-              amount: payout.amount,
-              tokenAddress: payout.tokenAddress,
-              custodialAddress: custodialWallet.address,
-              claimUrl: `/claim/${custodialWallet.claimToken}`,
-              memo,
-              txHash,
-            },
-            contributor: {
-              id: submissionDetails.submitter.id,
-              name: githubUsername,
-              githubUserId,
-            },
-          });
-        } catch (error) {
-          console.error('[approve] Custodial payment auto-signing failed:', error);
-          // Fall through to manual signing
-        }
-      }
-    }
-
-    // Manual signing flow - return txParams
-    return NextResponse.json({
-      message: 'Ready to send payment to custodial wallet',
-      custodial: true,
-      autoSigned: false,
-      payout: {
-        id: payout.id,
-        amount: payout.amount,
-        tokenAddress: payout.tokenAddress,
-        custodialAddress: custodialWallet.address,
-        claimUrl: `/claim/${custodialWallet.claimToken}`,
-        memo,
-        status: payout.status,
-      },
-      txParams: {
-        to: txParams.to,
-        data: txParams.data,
-        value: txParams.value.toString(),
-      },
-      contributor: {
-        id: submissionDetails.submitter.id,
-        name: githubUsername,
-        githubUserId,
-      },
-    });
   } catch (error) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

@@ -1,12 +1,13 @@
-import { AddressDisplay } from '@/components/tempo/address-display';
-import { getSession } from '@/lib/auth/auth-server';
 import { getPasskeysByUser } from '@/db/queries/passkeys';
 import { getPayoutsByUser, getSentDirectPayments } from '@/db/queries/payouts';
-import { KeyRound, Wallet as WalletIcon } from 'lucide-react';
+import { getPendingPaymentsByFunder } from '@/db/queries/pending-payments';
+import { getSession } from '@/lib/auth/auth-server';
+import { Wallet as WalletIcon } from 'lucide-react';
 import { redirect } from 'next/navigation';
 import { ActivityFeed } from './_components/activity-feed';
 import { BalanceDisplay } from './_components/balance-display';
 import { CreateWalletButton } from './_components/create-wallet-button';
+import { PendingLiabilitiesWarning } from './_components/pending-liabilities-warning';
 import { WalletActions } from './_components/wallet-actions';
 
 /**
@@ -68,11 +69,33 @@ export default async function WalletPage() {
     );
   }
 
-  // Fetch earnings and sent payments data server-side
-  const [earnings, sentPayments] = await Promise.all([
+  // Fetch earnings, sent payments, and pending payments data server-side
+  const [earnings, sentPayments, pendingPaymentsRaw] = await Promise.all([
     getPayoutsByUser(session.user.id),
     getSentDirectPayments(session.user.id),
+    getPendingPaymentsByFunder(session.user.id),
   ]);
+
+  // Convert bigint amounts to strings for client component
+  // Design Decision: Server component serialization boundary
+  // - Alternative rejected: Change interface to bigint (breaks JSON serialization)
+  // - Alternative rejected: Convert in query (inconsistent with other queries)
+  // - Chosen approach: Map at server component boundary (matches API route pattern)
+  // Trade-off: Extra mapping step for type safety + clear serialization boundary
+  const pendingPayments = pendingPaymentsRaw.map((p) => ({
+    id: p.id,
+    amount: p.amount.toString(), // bigint → string for client component
+    tokenAddress: p.tokenAddress,
+    recipientGithubUsername: p.recipientGithubUsername,
+    bountyId: p.bountyId,
+    submissionId: p.submissionId,
+    status: p.status,
+    createdAt: p.createdAt,
+    claimExpiresAt: p.claimExpiresAt,
+    claimToken: p.claimToken,
+    bountyTitle: p.bountyTitle,
+    bountyGithubFullName: p.bountyGithubFullName,
+  }));
 
   // Has wallet - show wallet view
   return (
@@ -90,31 +113,17 @@ export default async function WalletPage() {
           <WalletActions walletAddress={wallet.tempoAddress} balance={0} />
         </section>
 
-        {/* Wallet Address - Server rendered (static) */}
-        <section className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border bg-card/50 p-4">
-          <div className="flex items-center gap-4">
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-secondary">
-              <KeyRound className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <div>
-              <p className="text-xs text-muted-foreground mb-1">Tempo Address (from passkey)</p>
-              <AddressDisplay address={wallet.tempoAddress} truncate={false} />
-            </div>
-          </div>
-          <a
-            href={`https://explore.tempo.xyz/address/${wallet.tempoAddress}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-sm text-muted-foreground hover:text-primary transition-colors"
-          >
-            View on Explorer &rarr;
-          </a>
-        </section>
+        {/* Pending Liabilities Warning */}
+        <PendingLiabilitiesWarning walletAddress={wallet.tempoAddress} />
 
         {/* Activity Section */}
         <section>
           <h2 className="text-lg font-medium mb-4">Activity</h2>
-          <ActivityFeed earnings={earnings} sentPayments={sentPayments} />
+          <ActivityFeed
+            earnings={earnings}
+            sentPayments={sentPayments}
+            pendingPayments={pendingPayments}
+          />
         </section>
       </div>
     </div>

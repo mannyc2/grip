@@ -1,10 +1,6 @@
 import { accessKeys, db, payouts } from '@/db';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { getNetworkForInsert } from '@/db/network';
-import {
-  createCustodialWalletRecord,
-  getCustodialWalletByGithubUserId,
-} from '@/db/queries/custodial-wallets';
 import { getUserWallet } from '@/db/queries/passkeys';
 import { createDirectPayment } from '@/db/queries/payouts';
 import { getUserByName } from '@/db/queries/users';
@@ -12,8 +8,8 @@ import { fetchGitHubUser } from '@/lib/github';
 import { notifyDirectPaymentReceived, notifyDirectPaymentSent } from '@/lib/notifications';
 import { broadcastTransaction, signTransactionWithAccessKey } from '@/lib/tempo/keychain-signing';
 import { tempoClient } from '@/lib/tempo/client';
+import { TEMPO_CHAIN_ID } from '@/lib/tempo/constants';
 import { buildDirectPaymentTransaction } from '@/lib/tempo';
-import { createCustodialWallet } from '@/lib/turnkey/custodial-wallets';
 import { and, eq } from 'drizzle-orm';
 import { type NextRequest, NextResponse } from 'next/server';
 
@@ -88,7 +84,7 @@ export async function POST(request: NextRequest) {
     let recipientAddress: string;
     let recipientPasskeyId: string | null = null;
     let custodialWalletId: string | undefined;
-    let isCustodial = false;
+    const isCustodial = false;
     let recipientUserId: string;
 
     if (recipient?.tempoAddress) {
@@ -100,38 +96,142 @@ export async function POST(request: NextRequest) {
       const recipientWallet = await getUserWallet(recipient.id);
       recipientPasskeyId = recipientWallet?.id ?? null;
     } else {
-      // Recipient has NO account → custodial wallet flow
-      isCustodial = true;
-      recipientUserId = recipient?.id ?? `github:${githubUser.id}`; // Synthetic ID if no account
+      // Recipient has NO account → pending payment flow
+      // Same pattern as bounty approvals: create dedicated Access Key + pending payment
+      console.log('[direct-payment] Recipient has no account - creating pending payment');
 
-      // Check for existing custodial wallet
-      let custodialWallet = await getCustodialWalletByGithubUserId(BigInt(githubUser.id));
+      const githubUserId = githubUser.id; // GitHub API returns numeric ID
+      const githubUsername = recipientUsername;
 
-      if (!custodialWallet) {
-        // Create new Turnkey wallet
-        const { walletId, accountId, address } = await createCustodialWallet({
-          githubUserId: githubUser.id,
-          githubUsername: recipientUsername,
-        });
+      // Check for Access Key signature in request body
+      const { accessKeySignature, accessKeyAuthHash } = body;
 
-        // Generate claim token (64-byte hex string)
-        const crypto = await import('node:crypto');
-        const claimToken = crypto.randomBytes(32).toString('hex');
-        const claimExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year
-
-        custodialWallet = await createCustodialWalletRecord({
-          githubUserId: BigInt(githubUser.id),
-          githubUsername: recipientUsername,
-          turnkeyWalletId: walletId,
-          turnkeyAccountId: accountId,
-          address,
-          claimToken,
-          claimExpiresAt,
-        });
+      if (!accessKeySignature || !accessKeyAuthHash) {
+        // Return response indicating frontend needs to collect signature
+        return NextResponse.json(
+          {
+            requiresAccessKeySignature: true,
+            payment: {
+              amount: amount.toString(),
+              tokenAddress,
+              recipientGithubUsername: githubUsername,
+              recipientGithubUserId: githubUserId.toString(),
+            },
+          },
+          { status: 400 }
+        );
       }
 
-      recipientAddress = custodialWallet.address;
-      custodialWalletId = custodialWallet.id;
+      try {
+        // Check balance before creating pending payment
+        // Prevents bad UX: recipient claim fails on-chain if sender has insufficient balance
+        const senderWallet = await getUserWallet(session.user.id);
+        if (!senderWallet?.tempoAddress) {
+          return NextResponse.json({ error: 'Sender wallet not found' }, { status: 400 });
+        }
+
+        const { checkSufficientBalance } = await import('@/lib/tempo/balance');
+        const balanceCheck = await checkSufficientBalance({
+          funderId: session.user.id,
+          walletAddress: senderWallet.tempoAddress,
+          tokenAddress,
+          newAmount: BigInt(amount),
+        });
+
+        if (!balanceCheck.sufficient) {
+          // Format amounts for error message (assuming 6 decimals for USDC)
+          const balanceFormatted = (Number(balanceCheck.balance) / 1_000_000).toFixed(2);
+          const requiredFormatted = (Number(balanceCheck.totalLiabilities) / 1_000_000).toFixed(2);
+          const shortfallFormatted = (
+            Number(balanceCheck.totalLiabilities - balanceCheck.balance) / 1_000_000
+          ).toFixed(2);
+
+          return NextResponse.json(
+            {
+              error: 'Insufficient balance for pending payment',
+              details: {
+                message: `You have $${balanceFormatted} USDC but need $${requiredFormatted} USDC (including existing pending payments). Please fund your wallet with at least $${shortfallFormatted} USDC more.`,
+                balance: balanceCheck.balance.toString(),
+                required: balanceCheck.totalLiabilities.toString(),
+                shortfall: (balanceCheck.totalLiabilities - balanceCheck.balance).toString(),
+              },
+            },
+            { status: 400 }
+          );
+        }
+
+        // Create dedicated Access Key
+        const { createDedicatedAccessKey } = await import('@/lib/tempo/dedicated-access-keys');
+        const dedicatedKey = await createDedicatedAccessKey({
+          userId: session.user.id,
+          tokenAddress,
+          amount: BigInt(amount),
+          authorizationSignature: accessKeySignature,
+          authorizationHash: accessKeyAuthHash,
+          chainId: TEMPO_CHAIN_ID,
+        });
+
+        console.log(`[direct-payment] Created dedicated Access Key: ${dedicatedKey.id}`);
+
+        // Create pending payment
+        const { createPendingPaymentForDirectPayment } = await import(
+          '@/db/queries/pending-payments'
+        );
+        const pendingPayment = await createPendingPaymentForDirectPayment({
+          funderId: session.user.id,
+          recipientGithubUserId: Number(githubUserId),
+          recipientGithubUsername: githubUsername,
+          amount: BigInt(amount),
+          tokenAddress,
+          dedicatedAccessKeyId: dedicatedKey.id,
+        });
+
+        console.log(`[direct-payment] Created pending payment: ${pendingPayment.id}`);
+
+        // Send pending payment notification (if recipient has account)
+        // Design Decision: Only notify if recipient already has BountyLane account (but no wallet)
+        // - New users won't see notification anyway (not logged in)
+        // - Sender gets claim URL in response for manual sharing
+        try {
+          const { getUserByName } = await import('@/db/queries/users');
+          const recipientUser = await getUserByName(githubUsername);
+
+          if (recipientUser) {
+            // Recipient has account but no wallet - notify them
+            const { notifyPendingPaymentCreated } = await import('@/lib/notifications');
+            await notifyPendingPaymentCreated({
+              recipientId: recipientUser.id,
+              funderName: session.user.name ?? 'Someone',
+              amount: amount.toString(),
+              tokenAddress,
+              claimUrl: `${process.env.NEXT_PUBLIC_APP_URL}/claim/${pendingPayment.claimToken}`,
+              claimExpiresAt: pendingPayment.claimExpiresAt,
+              // No bountyId/bountyTitle for direct payments
+            });
+          }
+        } catch (error) {
+          console.error('[direct-payment] Failed to send pending payment notification:', error);
+        }
+
+        return NextResponse.json({
+          success: true,
+          message: `Payment authorized. Share the claim link with @${githubUsername}`,
+          pendingPayment: {
+            id: pendingPayment.id,
+            amount: pendingPayment.amount.toString(),
+            tokenAddress: pendingPayment.tokenAddress,
+            claimUrl: `${process.env.NEXT_PUBLIC_APP_URL}/claim/${pendingPayment.claimToken}`,
+            claimExpiresAt: pendingPayment.claimExpiresAt,
+          },
+          recipient: {
+            githubUserId: githubUserId.toString(),
+            githubUsername,
+          },
+        });
+      } catch (error) {
+        console.error('[direct-payment] Failed to create pending payment:', error);
+        return NextResponse.json({ error: 'Failed to create pending payment' }, { status: 500 });
+      }
     }
 
     // 5. Create payout record

@@ -9,6 +9,7 @@ import type { bounties, payouts, repoSettings } from '@/db';
 import {
   ArrowDownWideNarrow,
   ArrowUpWideNarrow,
+  Clock,
   Download,
   ExternalLink,
   Filter,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { CancelPendingPaymentButton } from './cancel-pending-payment-button';
 
 /**
  * ActivityFeed - Simplified tabbed activity view for wallet page
@@ -59,9 +61,25 @@ interface SentPaymentRecord {
   } | null;
 }
 
+interface PendingPaymentRecord {
+  id: string;
+  amount: string;
+  tokenAddress: string;
+  recipientGithubUsername: string;
+  bountyId: string | null;
+  submissionId: string | null;
+  status: string;
+  createdAt: string | null;
+  claimExpiresAt: string | null;
+  claimToken: string;
+  bountyTitle: string | null;
+  bountyGithubFullName: string | null;
+}
+
 interface ActivityFeedProps {
   earnings?: EarningRecord[];
   sentPayments?: SentPaymentRecord[];
+  pendingPayments?: PendingPaymentRecord[];
 }
 
 const DEFAULT_COUNTS: ActivityCounts = {
@@ -110,14 +128,18 @@ const ACTIVITY_TABS: {
   },
 ];
 
-export function ActivityFeed({ earnings = [], sentPayments = [] }: ActivityFeedProps) {
+export function ActivityFeed({
+  earnings = [],
+  sentPayments = [],
+  pendingPayments = [],
+}: ActivityFeedProps) {
   const [activeTab, setActiveTab] = useState<ActivityType>('all');
 
   // Calculate counts from actual data
   const counts: ActivityCounts = {
-    all: earnings.length + sentPayments.length,
+    all: earnings.length + sentPayments.length + pendingPayments.length,
     earnings: earnings.length,
-    sent: sentPayments.length,
+    sent: sentPayments.length + pendingPayments.length,
     withdrawals: 0,
     deposits: 0,
   };
@@ -153,11 +175,42 @@ export function ActivityFeed({ earnings = [], sentPayments = [] }: ActivityFeedP
 
         {/* All Tab */}
         <TabsContent value="all" className="m-0">
-          {earnings.length > 0 ? (
+          {earnings.length > 0 || sentPayments.length > 0 || pendingPayments.length > 0 ? (
             <div className="divide-y divide-border">
-              {earnings.map((record) => (
-                <EarningItem key={record.payout.id} record={record} />
-              ))}
+              {/* Combine all activities and sort by date */}
+              {[
+                ...earnings.map((e) => ({
+                  type: 'earning' as const,
+                  data: e,
+                  date: e.payout.confirmedAt ?? e.payout.createdAt,
+                })),
+                ...sentPayments.map((s) => ({
+                  type: 'sent' as const,
+                  data: s,
+                  date: s.payout.confirmedAt ?? s.payout.createdAt,
+                })),
+                ...pendingPayments.map((p) => ({
+                  type: 'pending' as const,
+                  data: p,
+                  date: p.createdAt,
+                })),
+              ]
+                .sort((a, b) => {
+                  const dateA = a.date ? new Date(a.date).getTime() : 0;
+                  const dateB = b.date ? new Date(b.date).getTime() : 0;
+                  return dateB - dateA; // Newest first
+                })
+                .map((item) => {
+                  if (item.type === 'earning')
+                    return (
+                      <EarningItem key={`earning-${item.data.payout.id}`} record={item.data} />
+                    );
+                  if (item.type === 'sent')
+                    return (
+                      <SentPaymentItem key={`sent-${item.data.payout.id}`} record={item.data} />
+                    );
+                  return <PendingPaymentItem key={`pending-${item.data.id}`} payment={item.data} />;
+                })}
             </div>
           ) : (
             <div className="p-6">
@@ -193,11 +246,33 @@ export function ActivityFeed({ earnings = [], sentPayments = [] }: ActivityFeedP
 
         {/* Sent Tab */}
         <TabsContent value="sent" className="m-0">
-          {sentPayments.length > 0 ? (
+          {sentPayments.length > 0 || pendingPayments.length > 0 ? (
             <div className="divide-y divide-border">
-              {sentPayments.map((record) => (
-                <SentPaymentItem key={record.payout.id} record={record} />
-              ))}
+              {/* Combine sent payments and pending payments, sort by date */}
+              {[
+                ...sentPayments.map((s) => ({
+                  type: 'sent' as const,
+                  data: s,
+                  date: s.payout.confirmedAt ?? s.payout.createdAt,
+                })),
+                ...pendingPayments.map((p) => ({
+                  type: 'pending' as const,
+                  data: p,
+                  date: p.createdAt,
+                })),
+              ]
+                .sort((a, b) => {
+                  const dateA = a.date ? new Date(a.date).getTime() : 0;
+                  const dateB = b.date ? new Date(b.date).getTime() : 0;
+                  return dateB - dateA;
+                })
+                .map((item) => {
+                  if (item.type === 'sent')
+                    return (
+                      <SentPaymentItem key={`sent-${item.data.payout.id}`} record={item.data} />
+                    );
+                  return <PendingPaymentItem key={`pending-${item.data.id}`} payment={item.data} />;
+                })}
             </div>
           ) : (
             <div className="p-6">
@@ -356,6 +431,67 @@ function SentPaymentItem({ record }: { record: SentPaymentRecord }) {
               <ExternalLink className="h-3 w-3" />
             </Link>
           )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PendingPaymentItem({ payment }: { payment: PendingPaymentRecord }) {
+  const createdDate = payment.createdAt
+    ? new Date(payment.createdAt).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : null;
+
+  const expiresDate = payment.claimExpiresAt
+    ? new Date(payment.claimExpiresAt).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : null;
+
+  const context = payment.bountyTitle
+    ? `${payment.bountyGithubFullName} • ${payment.bountyTitle}`
+    : 'Direct payment';
+
+  return (
+    <div className="flex items-start gap-4 p-4 hover:bg-muted/50 transition-colors">
+      {/* Amber icon for "pending" state */}
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-950">
+        <Clock className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="font-medium truncate">Payment to @{payment.recipientGithubUsername}</p>
+            <p className="text-sm text-muted-foreground mt-0.5 truncate">{context}</p>
+          </div>
+
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <TokenAmount amount={payment.amount} symbol="USDC" className="font-semibold" />
+            <Badge variant="secondary" className="text-xs">
+              Pending Claim
+            </Badge>
+            <CancelPendingPaymentButton paymentId={payment.id} />
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+          {createdDate && <span>Created: {createdDate}</span>}
+          {expiresDate && <span>Expires: {expiresDate}</span>}
+          <Link
+            href={`/claim/${payment.claimToken}`}
+            className="flex items-center gap-1 hover:text-primary transition-colors"
+          >
+            View claim link
+            <ExternalLink className="h-3 w-3" />
+          </Link>
         </div>
       </div>
     </div>

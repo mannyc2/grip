@@ -14,14 +14,15 @@ import { useState } from 'react';
  */
 
 type CreateWalletForClaimProps = {
-  custodialWallet: {
-    githubUsername: string;
-    address: string;
+  pendingPayment: {
+    recipientGithubUsername: string;
+    amount: bigint;
+    tokenAddress: string;
   };
   claimToken: string;
 };
 
-export function CreateWalletForClaim({ custodialWallet, claimToken }: CreateWalletForClaimProps) {
+export function CreateWalletForClaim({ pendingPayment, claimToken }: CreateWalletForClaimProps) {
   const router = useRouter();
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,16 +64,16 @@ export function CreateWalletForClaim({ custodialWallet, claimToken }: CreateWall
           <div className="gap-2">
             <h1 className="heading-2">Create Your Wallet</h1>
             <p className="body-base text-muted-foreground">
-              Create a passkey wallet to claim your payment. Your payment is securely held and
-              waiting for you.
+              Create a passkey wallet to claim your payment. The payment will transfer from the
+              funder's wallet when you claim.
             </p>
           </div>
 
           <div className="w-full rounded-lg bg-muted p-4 gap-2">
             <p className="body-sm text-muted-foreground">Payment for:</p>
-            <p className="body-base font-medium">@{custodialWallet.githubUsername}</p>
-            <p className="body-sm text-muted-foreground mt-2">Held in secure wallet:</p>
-            <p className="font-mono body-sm break-all">{custodialWallet.address}</p>
+            <p className="body-base font-medium">@{pendingPayment.recipientGithubUsername}</p>
+            <p className="body-sm text-muted-foreground mt-2">Status:</p>
+            <p className="body-sm">Pending - create wallet to claim</p>
           </div>
 
           {error && (

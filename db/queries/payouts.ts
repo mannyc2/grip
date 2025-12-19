@@ -6,7 +6,7 @@ export type PayoutStatus = 'pending' | 'confirmed' | 'failed';
 
 export type CreatePayoutInput = {
   submissionId?: string;
-  bountyId: string;
+  bountyId?: string; // Optional for direct payments
   recipientUserId: string;
 
   // OPTIONAL for permissionless bounties (bounties without repo settings)

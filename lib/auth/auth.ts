@@ -100,17 +100,21 @@ export const auth = betterAuth({
           });
 
           let githubUsername = ctx.context.user.name; // Fallback to current name
+          const githubUserId = account.accountId; // GitHub numeric user ID
 
           if (githubResponse.ok) {
             const githubData = await githubResponse.json();
             githubUsername = githubData.login; // GitHub username (e.g., "john-doe")
           }
 
+          // Store both GitHub username (for URLs) and GitHub user ID (for security verification)
+          // githubUserId is used to verify identity when claiming pending payments
           await ctx.context.adapter.update({
             model: 'user',
             where: [{ field: 'id', value: ctx.context.user.id }],
             update: {
               name: githubUsername, // Set to GitHub login, not display name
+              githubUserId: BigInt(githubUserId), // Store numeric GitHub user ID for verification
             },
           });
         }

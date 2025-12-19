@@ -1,44 +1,45 @@
 'use client';
 
-import { TokenAmount } from '@/components/tempo/token-amount';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { getExplorerTxUrl } from '@/lib/tempo/constants';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { formatUnits } from 'viem';
 
 /**
  * Claim Payment Component
  *
  * Final step: user clicks to claim their payment.
  * Calls API endpoint which:
- * 1. Signs transaction with custodial wallet (Turnkey)
- * 2. Transfers funds to user's passkey wallet
+ * 1. Signs transaction with dedicated Access Key (from funder's wallet)
+ * 2. Transfers funds directly to user's passkey wallet
  * 3. Uses Tempo fee sponsorship (backend pays gas)
+ * 4. Revokes Access Key after claim (single-use)
  *
- * This is the "wow" moment - demonstrates Tempo's unique capabilities.
+ * This demonstrates Tempo's Access Keys - non-custodial pre-authorized payments.
  */
 
 type ClaimPaymentProps = {
-  custodialWallet: {
-    id: string;
-    githubUsername: string;
-    address: string;
+  pendingPayment: {
     claimToken: string;
+    recipientGithubUsername: string;
+    amount: bigint;
+    tokenAddress: string;
   };
   userWallet: {
     tempoAddress: string;
   };
 };
 
-export function ClaimPayment({ custodialWallet, userWallet }: ClaimPaymentProps) {
+export function ClaimPayment({ pendingPayment, userWallet }: ClaimPaymentProps) {
   const router = useRouter();
   const [isClaiming, setIsClaiming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{
     txHashes: string[];
-    totalAmount: string;
+    totalTransfers: number;
   } | null>(null);
 
   const handleClaim = async () => {
@@ -47,7 +48,7 @@ export function ClaimPayment({ custodialWallet, userWallet }: ClaimPaymentProps)
       setError(null);
 
       // Call claim API
-      const response = await fetch(`/api/claim/${custodialWallet.claimToken}`, {
+      const response = await fetch(`/api/claim/${pendingPayment.claimToken}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -60,8 +61,10 @@ export function ClaimPayment({ custodialWallet, userWallet }: ClaimPaymentProps)
       const data = await response.json();
 
       setSuccess({
-        txHashes: data.transfers.map((t: { txHash: string }) => t.txHash),
-        totalAmount: data.totalTransfers.toString(),
+        txHashes: data.results
+          .filter((r: { success: boolean }) => r.success)
+          .map((r: { txHash: string }) => r.txHash),
+        totalTransfers: data.results.filter((r: { success: boolean }) => r.success).length,
       });
 
       // Refresh to show success state
@@ -126,14 +129,16 @@ export function ClaimPayment({ custodialWallet, userWallet }: ClaimPaymentProps)
           <div className="gap-2">
             <h1 className="heading-2">Ready to Claim</h1>
             <p className="body-base text-muted-foreground">
-              Transfer your payment from the secure custodial wallet to your passkey wallet.
+              Execute the pre-authorized payment transfer to your passkey wallet.
             </p>
           </div>
 
           <div className="w-full gap-4">
             <div className="rounded-lg bg-muted p-4 gap-2">
-              <p className="body-sm text-muted-foreground">From (Custodial Wallet):</p>
-              <p className="font-mono body-sm break-all">{custodialWallet.address}</p>
+              <p className="body-sm text-muted-foreground">Payment for:</p>
+              <p className="body-base font-medium">@{pendingPayment.recipientGithubUsername}</p>
+              <p className="body-sm text-muted-foreground mt-2">Amount:</p>
+              <p className="font-medium tabular-nums">${formatUnits(pendingPayment.amount, 6)}</p>
             </div>
 
             <div className="flex justify-center">
@@ -159,11 +164,11 @@ export function ClaimPayment({ custodialWallet, userWallet }: ClaimPaymentProps)
 
             <div className="rounded-lg bg-accent/10 p-4 gap-2 text-left">
               <div className="flex items-center gap-2 mb-2">
-                <Badge variant="secondary">Powered by Tempo</Badge>
+                <Badge variant="secondary">Powered by Tempo Access Keys</Badge>
               </div>
               <p className="body-sm text-muted-foreground">
-                <strong>Zero gas fees:</strong> Backend pays transaction fees via Tempo fee
-                sponsorship. You receive the full amount.
+                <strong>Non-custodial:</strong> Funds transfer directly from funder's wallet using a
+                dedicated Access Key. No intermediate custody.
               </p>
             </div>
           </div>

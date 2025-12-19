@@ -11,6 +11,7 @@ import { CheckCircle, ExternalLink, GitPullRequest, Github } from 'lucide-react'
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { ApprovePendingPaymentModal } from './approve-pending-payment-modal';
 import { ClaimSelectionModal } from './claim-selection-modal';
 import { PaymentModal } from './payment-modal';
 
@@ -68,6 +69,19 @@ export function BountyDetail({
   const [autoSignSuccess, setAutoSignSuccess] = useState(false);
   const [autoSignTxHash, setAutoSignTxHash] = useState<string | null>(null);
 
+  // Pending payment modal state
+  const [showPendingPaymentModal, setShowPendingPaymentModal] = useState(false);
+  const [pendingPaymentDetails, setPendingPaymentDetails] = useState<{
+    amount: string;
+    tokenAddress: string;
+    recipientGithubUsername: string;
+    recipientGithubUserId: string;
+  } | null>(null);
+  const [pendingPaymentSignature, setPendingPaymentSignature] = useState<{
+    signature: string;
+    authHash: string;
+  } | null>(null);
+
   const handleClaim = async () => {
     setClaimLoading(true);
     setClaimError(null);
@@ -112,12 +126,29 @@ export function BountyDetail({
     setActionError(null);
 
     try {
+      // Include Access Key signature if we have it (retry after collecting)
+      const body: { claimId?: string; accessKeySignature?: string; accessKeyAuthHash?: string } = {
+        claimId,
+      };
+      if (pendingPaymentSignature) {
+        body.accessKeySignature = pendingPaymentSignature.signature;
+        body.accessKeyAuthHash = pendingPaymentSignature.authHash;
+      }
+
       const res = await fetch(`/api/bounties/${bounty.id}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ claimId }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
+
+      // Check for pending payment signature requirement
+      // This happens when contributor has no wallet yet
+      if (data.requiresAccessKeySignature && data.payment) {
+        setPendingPaymentDetails(data.payment);
+        setShowPendingPaymentModal(true);
+        return; // Don't finish approval yet - waiting for signature
+      }
 
       if (!res.ok) {
         throw new Error(data.error || 'Failed to approve');
@@ -162,6 +193,19 @@ export function BountyDetail({
     setTimeout(() => {
       window.location.reload();
     }, 2000);
+  };
+
+  const handlePendingPaymentSignature = (signature: string, authHash: string) => {
+    // Store signature and retry approval
+    setPendingPaymentSignature({ signature, authHash });
+    setShowPendingPaymentModal(false);
+
+    // Retry approval with signature
+    // Use the same claimId from the original approval attempt
+    const activeSubmissions =
+      bounty.submissions?.filter((c) => c.status === 'pending' || c.status === 'approved') ?? [];
+    const claimId = activeSubmissions[0]?.id;
+    approveWithClaim(claimId);
   };
 
   const handleReject = async () => {
@@ -617,6 +661,17 @@ export function BountyDetail({
           payout={payoutData}
           claimant={claimantInfo}
           onSuccess={handlePaymentSuccess}
+        />
+      )}
+
+      {/* Pending Payment Signature Modal */}
+      {pendingPaymentDetails && treasuryCredentials && (
+        <ApprovePendingPaymentModal
+          open={showPendingPaymentModal}
+          onOpenChange={setShowPendingPaymentModal}
+          onSuccess={handlePendingPaymentSignature}
+          paymentDetails={pendingPaymentDetails}
+          credentialId={treasuryCredentials.credentialId}
         />
       )}
 

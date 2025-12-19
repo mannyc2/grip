@@ -1,17 +1,13 @@
+import { db } from '@/db';
+import { accessKeys } from '@/db/schema/business';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { getNetworkForInsert } from '@/db/network';
-import {
-  getActiveCustodialWalletsForGithubUser,
-  getCustodialWalletBalance,
-  getCustodialWalletByClaimToken,
-  markCustodialWalletClaimed,
-} from '@/db/queries/custodial-wallets';
 import { getUserWallet } from '@/db/queries/passkeys';
+import { createPayout, updatePayoutStatus } from '@/db/queries/payouts';
 import { buildPayoutTransaction } from '@/lib/tempo';
 import { tempoClient } from '@/lib/tempo/client';
-import { TEMPO_TOKENS } from '@/lib/tempo/constants';
-import { broadcastTransaction } from '@/lib/tempo/keychain-signing';
-import { signWithCustodialWallet } from '@/lib/turnkey/custodial-wallets';
+import { broadcastTransaction, signTransactionWithAccessKey } from '@/lib/tempo/keychain-signing';
+import { eq } from 'drizzle-orm';
 import { type NextRequest, NextResponse } from 'next/server';
 
 type RouteContext = {
@@ -21,209 +17,202 @@ type RouteContext = {
 /**
  * POST /api/claim/[token]
  *
- * Claim custodial wallet funds and transfer to user's passkey wallet.
+ * Claim pending payment and transfer from funder's wallet to user's passkey wallet.
  *
  * KEY TEMPO FEATURES DEMONSTRATED:
- * 1. Fee sponsorship - Custodial wallet pays its own gas in tokens being transferred
- * 2. Payment lanes - Guaranteed low fees (~$0.001 via TIP-20)
- * 3. Batched payments - Multiple custodial wallets claimed at once
- * 4. P256 compatibility - Turnkey wallet (secp256k1) → user's passkey wallet (P256)
+ * 1. Access Keys - Funder pre-authorized payment with dedicated Access Key
+ * 2. Fee sponsorship - Payment execution pays gas in tokens being transferred
+ * 3. Payment lanes - Guaranteed low fees (~$0.001 via TIP-20)
+ * 4. Batched payments - Multiple pending payments claimed at once
+ * 5. Non-custodial - Funds stay in funder's wallet until claim (no custody)
  *
  * Flow:
  * 1. Verify claim token and user authentication
- * 2. Find ALL active custodial wallets for this GitHub user
- * 3. Query token balances for each wallet
- * 4. Sign transfers with Turnkey (custodial wallet pays own gas)
- * 5. Broadcast transactions to Tempo
- * 6. Mark wallets as claimed
+ * 2. Find ALL pending payments for this GitHub user
+ * 3. For each pending payment:
+ *    a. Get funder's wallet and dedicated Access Key
+ *    b. Sign transfer with Access Key (from funder's wallet)
+ *    c. Broadcast transaction to Tempo
+ *    d. Create payout record
+ *    e. Mark pending payment as claimed
+ *    f. Revoke dedicated Access Key (single-use)
  *
- * Why this is impressive:
- * - User pays ZERO gas (custodial wallet pays in the token being transferred)
- * - Multiple payments claimed in one click
- * - Verifiable on-chain (not a database promise)
- * - Production-grade custody (Turnkey HSM)
+ * Why this is better than custodial wallets:
+ * - Funds never leave funder's control until claim
+ * - No intermediate custody (reduced attack surface)
+ * - Funder retains full control (can cancel if balance insufficient)
+ * - Access Keys provide granular, auditable spending limits
  */
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const session = await requireAuth();
     const { token } = await context.params;
 
-    // 1. Get custodial wallet by claim token
-    const custodialWallet = await getCustodialWalletByClaimToken(token);
+    // Get pending payment
+    const { getPendingPaymentByClaimToken } = await import('@/db/queries/pending-payments');
+    const pendingPayment = await getPendingPaymentByClaimToken(token);
 
-    if (!custodialWallet || custodialWallet.status !== 'pending') {
-      return NextResponse.json(
-        { error: 'Invalid claim token or payment already claimed' },
-        { status: 400 }
-      );
+    if (!pendingPayment) {
+      return NextResponse.json({ error: 'Invalid claim token' }, { status: 404 });
     }
 
-    // 2. Check expiration (lazy check - no cron job)
-    if (new Date() > new Date(custodialWallet.claimExpiresAt)) {
-      return NextResponse.json({ error: 'Claim link has expired after 1 year' }, { status: 400 });
+    // Validate status
+    if (pendingPayment.status !== 'pending') {
+      return NextResponse.json({ error: 'Payment already claimed or expired' }, { status: 400 });
     }
 
-    // 3. Verify GitHub identity matches
-    // TODO: Add githubUserId to user table and verify it matches
-    // For now, we rely on GitHub OAuth ensuring the correct user is logged in
+    // Check expiration
+    if (new Date() > new Date(pendingPayment.claimExpiresAt)) {
+      return NextResponse.json({ error: 'Claim link expired (1 year limit)' }, { status: 400 });
+    }
 
-    // 4. Get user's passkey wallet
+    // Verify GitHub identity matches (security: prevents claim token theft)
+    // session.user.githubUserId populated during GitHub OAuth in lib/auth/auth.ts
+    const userGithubId = (session.user as { githubUserId?: bigint }).githubUserId;
+    if (userGithubId !== pendingPayment.recipientGithubUserId) {
+      return NextResponse.json({ error: 'GitHub account mismatch' }, { status: 403 });
+    }
+
+    // Get user's wallet
     const userWallet = await getUserWallet(session.user.id);
     if (!userWallet?.tempoAddress) {
       return NextResponse.json(
-        { error: 'Create a passkey wallet before claiming' },
+        { error: 'Please create a passkey wallet before claiming' },
         { status: 400 }
       );
     }
 
-    // 5. Batch claiming: Get ALL custodial wallets for this GitHub user
-    const allCustodialWallets = await getActiveCustodialWalletsForGithubUser(
-      custodialWallet.githubUserId
+    // Batch claiming: Get ALL pending payments for this GitHub user
+    const { getPendingPaymentsByGithubUser } = await import('@/db/queries/pending-payments');
+    const allPending = await getPendingPaymentsByGithubUser(
+      Number(pendingPayment.recipientGithubUserId)
     );
 
-    if (allCustodialWallets.length === 0) {
-      return NextResponse.json({ error: 'No active custodial wallets found' }, { status: 400 });
-    }
+    console.log(`[claim] Claiming ${allPending.length} pending payment(s)`);
 
-    console.log(`[claim] Claiming ${allCustodialWallets.length} custodial wallet(s)`);
-
-    // 6. Query balances and build transfers
-    // Check multiple common tokens (PathUSD, USDC, etc.)
-    const network = getNetworkForInsert();
-    const tokensToCheck = [TEMPO_TOKENS.USDC, TEMPO_TOKENS.PATH_USD];
-
-    const transfers: Array<{
-      walletId: string;
-      custodialWalletId: string;
-      custodialAddress: string;
-      tokenAddress: string;
-      amount: bigint;
-    }> = [];
-
-    for (const wallet of allCustodialWallets) {
-      for (const tokenAddress of tokensToCheck) {
-        try {
-          const balance = await getCustodialWalletBalance({
-            address: wallet.address,
-            tokenAddress,
-          });
-
-          if (balance > BigInt(0)) {
-            transfers.push({
-              walletId: wallet.turnkeyWalletId,
-              custodialWalletId: wallet.id,
-              custodialAddress: wallet.address,
-              tokenAddress,
-              amount: balance,
-            });
-
-            console.log(
-              `[claim] Found balance: ${balance.toString()} of token ${tokenAddress} in wallet ${wallet.address}`
-            );
-          }
-        } catch (error) {
-          console.error(`[claim] Failed to check balance for ${wallet.address}:`, error);
-          // Continue checking other wallets/tokens
-        }
-      }
-    }
-
-    if (transfers.length === 0) {
-      return NextResponse.json({ error: 'No funds found to claim' }, { status: 400 });
-    }
-
-    console.log(`[claim] Executing ${transfers.length} transfer(s)`);
-
-    // 7. Execute transfers with Tempo fee sponsorship
     const results = [];
 
-    for (const transfer of transfers) {
+    // Execute each payment
+    for (const payment of allPending) {
       try {
-        // Build transfer transaction (TIP-20 transfer to user's wallet)
-        const txParams = buildPayoutTransaction({
-          tokenAddress: transfer.tokenAddress as `0x${string}`,
-          recipientAddress: userWallet.tempoAddress as `0x${string}`,
-          amount: transfer.amount,
-          issueNumber: 0,
-          prNumber: 0,
-          username: custodialWallet.githubUsername,
+        // Get funder's wallet
+        const funderWallet = await getUserWallet(payment.funderId);
+        if (!funderWallet?.tempoAddress) {
+          throw new Error('Funder wallet not found');
+        }
+
+        // Get dedicated Access Key
+        const dedicatedKey = await db.query.accessKeys.findFirst({
+          where: eq(accessKeys.id, payment.dedicatedAccessKeyId),
         });
 
-        // Get nonce for custodial wallet
+        if (!dedicatedKey || dedicatedKey.status !== 'active') {
+          throw new Error('Payment authorization revoked');
+        }
+
+        // Get bounty metadata for on-chain memo (if this is a bounty payment)
+        let issueNumber = 0;
+        let prNumber = 0;
+        if (payment.bountyId && payment.submissionId) {
+          const { getBountyById } = await import('@/db/queries/bounties');
+          const bounty = await getBountyById(payment.bountyId);
+          if (bounty) {
+            issueNumber = bounty.githubIssueNumber;
+          }
+
+          const { getSubmissionById } = await import('@/db/queries/submissions');
+          const submission = await getSubmissionById(payment.submissionId);
+          if (submission?.githubPrNumber) {
+            prNumber = submission.githubPrNumber;
+          }
+        }
+
+        // Build transaction
+        const txParams = buildPayoutTransaction({
+          tokenAddress: payment.tokenAddress as `0x${string}`,
+          recipientAddress: userWallet.tempoAddress as `0x${string}`,
+          amount: payment.amount,
+          issueNumber,
+          prNumber,
+          username: payment.recipientGithubUsername,
+        });
+
+        // Get nonce
         const nonce = BigInt(
           await tempoClient.getTransactionCount({
-            address: transfer.custodialAddress as `0x${string}`,
+            address: funderWallet.tempoAddress as `0x${string}`,
             blockTag: 'pending',
           })
         );
 
-        console.log(`[claim] Signing transfer from ${transfer.custodialAddress}...`);
-
-        // Sign with Turnkey custodial wallet
-        // CRITICAL: The custodial wallet pays its own gas in the token being transferred
-        // This is Tempo's fee sponsorship in action - no external gas payment needed
-        const { rawTransaction, hash } = await signWithCustodialWallet({
-          walletId: transfer.walletId,
+        // Sign with dedicated Access Key
+        const { rawTransaction } = await signTransactionWithAccessKey({
           tx: {
             to: txParams.to,
             data: txParams.data,
             value: txParams.value,
-            nonce: Number(nonce),
+            nonce,
           },
-          network: network as 'testnet' | 'mainnet',
+          funderAddress: funderWallet.tempoAddress as `0x${string}`,
+          network: getNetworkForInsert() as 'testnet' | 'mainnet',
         });
 
-        console.log('[claim] Broadcasting transaction...');
-
-        // Broadcast transaction to Tempo
-        // Fee is paid in the token being transferred (TIP-20 feature)
-        // User receives full amount minus minimal fee (~$0.001)
+        // Broadcast
         const txHash = await broadcastTransaction(rawTransaction);
 
-        console.log(`[claim] Transfer successful: ${txHash}`);
-
-        // Mark custodial wallet as claimed
-        await markCustodialWalletClaimed({
-          walletId: transfer.custodialWalletId,
-          userId: session.user.id,
-          passkeyId: userWallet.id,
-          transferTxHash: txHash,
+        // Create payout record
+        const payout = await createPayout({
+          submissionId: payment.submissionId ?? undefined,
+          bountyId: payment.bountyId ?? undefined,
+          recipientUserId: session.user.id,
+          payerUserId: payment.funderId,
+          recipientPasskeyId: userWallet.id,
+          recipientAddress: userWallet.tempoAddress,
+          amount: payment.amount,
+          tokenAddress: payment.tokenAddress,
         });
+
+        await updatePayoutStatus(payout.id, 'pending', { txHash });
+
+        // Mark pending payment as claimed
+        const { markPendingPaymentClaimed } = await import('@/db/queries/pending-payments');
+        await markPendingPaymentClaimed({
+          paymentId: payment.id,
+          userId: session.user.id,
+          payoutId: payout.id,
+        });
+
+        // Revoke dedicated Access Key (single-use)
+        const { revokeDedicatedAccessKey } = await import('@/lib/tempo/dedicated-access-keys');
+        await revokeDedicatedAccessKey(payment.dedicatedAccessKeyId);
 
         results.push({
           success: true,
           txHash,
-          amount: Number(transfer.amount),
-          tokenAddress: transfer.tokenAddress,
-          from: transfer.custodialAddress,
-          to: userWallet.tempoAddress,
+          amount: payment.amount.toString(),
+          tokenAddress: payment.tokenAddress,
         });
       } catch (error) {
-        console.error('[claim] Transfer failed:', error);
+        console.error('[claim] Payment failed:', error);
         results.push({
           success: false,
-          error: error instanceof Error ? error.message : 'Transfer failed',
-          from: transfer.custodialAddress,
-          tokenAddress: transfer.tokenAddress,
+          error: error instanceof Error ? error.message : 'Unknown error',
+          amount: payment.amount.toString(),
+          tokenAddress: payment.tokenAddress,
         });
       }
     }
 
-    // Check if any transfers succeeded
-    const successfulTransfers = results.filter((r) => r.success);
+    const successCount = results.filter((r) => r.success).length;
 
-    if (successfulTransfers.length === 0) {
-      return NextResponse.json(
-        { error: 'All transfers failed', details: results },
-        { status: 500 }
-      );
+    if (successCount === 0) {
+      return NextResponse.json({ error: 'All payments failed', details: results }, { status: 500 });
     }
 
-    // 8. Success response
     return NextResponse.json({
-      message: `Successfully claimed ${successfulTransfers.length} payment(s)!`,
-      transfers: results,
-      totalTransfers: successfulTransfers.length,
+      success: true,
+      message: `Successfully claimed ${successCount} payment(s)!`,
+      results,
       recipient: {
         address: userWallet.tempoAddress,
         userId: session.user.id,
@@ -233,7 +222,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (error instanceof Error && error.message === 'Unauthorized') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    console.error('[claim] Error claiming payment:', error);
+    console.error('[claim] Error:', error);
     return NextResponse.json({ error: 'Failed to claim payment' }, { status: 500 });
   }
 }
