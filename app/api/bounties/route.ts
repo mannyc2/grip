@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
         await addLabelToIssue(token, owner, repo, githubIssueNumber);
 
         // Post comment on the issue
-        const bountyUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://bountylane.xyz'}/${owner}/${repo}/bounties/${bounty.id}`;
+        const bountyUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? 'https://usegrip.xyz'}/${owner}/${repo}/bounties/${bounty.id}`;
         const commentBody = generateBountyComment({
           amount,
           tokenSymbol: 'USDC',

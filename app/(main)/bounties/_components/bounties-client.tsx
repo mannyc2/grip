@@ -85,7 +85,7 @@ export function BountiesClient({ initialBounties, stats }: BountiesClientProps) 
           <h1 className="mb-2 text-3xl font-bold md:text-4xl">Bounties</h1>
           <p className="text-muted-foreground">
             <Link
-              href="https://docs.bountylane.dev/bounties"
+              href="https://docs.usegrip.xyz/bounties"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-foreground transition-colors"

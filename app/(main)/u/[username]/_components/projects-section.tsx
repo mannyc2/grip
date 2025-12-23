@@ -5,7 +5,7 @@ import { FolderGit2 } from 'lucide-react';
 
 interface ProjectsSectionProps {
   username: string; // GitHub username (for API)
-  userId: string | null; // BountyLane user ID (for database overlay)
+  userId: string | null; // GRIP user ID (for database overlay)
   isOwnProfile?: boolean;
 }
 
@@ -13,7 +13,7 @@ interface ProjectsSectionProps {
  * Projects section for user profile
  *
  * Displays ALL GitHub repositories (fetched from GitHub API)
- * Overlays BountyLane bounty data for imported projects.
+ * Overlays GRIP bounty data for imported projects.
  *
  * Pattern: GitHub API first + database overlay
  * - Works for any GitHub user (signed up or not)

@@ -4,7 +4,7 @@ import { encodeFunctionData, toHex } from 'viem';
 /**
  * TIP-20 Payment Utilities
  *
- * BountyLane-specific memo encoding and transaction building for Turnkey HSM signing.
+ * GRIP-specific memo encoding and transaction building for Turnkey HSM signing.
  *
  * Why we need transaction builders:
  * - Turnkey HSM requires pre-built `calls` array (can't use SDK's client.token.transfer())
@@ -19,7 +19,7 @@ import { encodeFunctionData, toHex } from 'viem';
 /**
  * Memo encoding for bounty payouts
  *
- * BountyLane memo format (32 bytes):
+ * GRIP memo format (32 bytes):
  * - bytes 0-7: Issue number (uint64, big-endian)
  * - bytes 8-15: PR number (uint64, big-endian)
  * - bytes 16-31: Contributor username (16 bytes, UTF-8, right-padded)

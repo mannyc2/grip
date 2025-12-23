@@ -1,7 +1,13 @@
 import { getAllBounties } from '@/db/queries/bounties';
 import { getTopReposByBountyValue } from '@/db/queries/repo-settings';
+import type { Metadata } from 'next';
 import { RecentActivity } from './_components/recent-activity';
 import { type TopRepo, TopRepos } from './_components/top-repos';
+
+export const metadata: Metadata = {
+  title: 'Explore Bounties',
+  description: 'Browse open bounties across GitHub repositories',
+};
 
 /**
  * Explore Page - Browse bounties and discover projects

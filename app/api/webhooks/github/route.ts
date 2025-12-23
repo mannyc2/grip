@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     if (!repo) {
-      // Repo not registered with BountyLane
+      // Repo not registered with GRIP
       return NextResponse.json({ message: 'Repository not registered' }, { status: 200 });
     }
 
@@ -150,7 +150,7 @@ async function handlePullRequest(
       // Create/update submission with PR info
       const submission = await findOrCreateSubmissionForGitHubUser(
         bounty.id,
-        BigInt(pr.user.id), // GitHub user ID (not BountyLane user ID)
+        BigInt(pr.user.id), // GitHub user ID (not GRIP user ID)
         BigInt(pr.id), // GitHub PR ID
         pr.number,
         pr.html_url,
@@ -182,7 +182,7 @@ async function handlePullRequest(
           }
         }
       } else {
-        console.log(`[webhook] PR author ${prAuthor} not registered with BountyLane`);
+        console.log(`[webhook] PR author ${prAuthor} not registered with GRIP`);
       }
     }
   }
@@ -210,11 +210,11 @@ async function handlePullRequest(
         continue;
       }
 
-      // Find or create BountyLane user from GitHub username
+      // Find or create GRIP user from GitHub username
       const userId = await findUserByGitHubUsername(prAuthor);
 
       if (!userId) {
-        console.log(`[webhook] PR author ${prAuthor} not registered with BountyLane`);
+        console.log(`[webhook] PR author ${prAuthor} not registered with GRIP`);
         continue;
       }
 

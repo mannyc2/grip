@@ -35,7 +35,7 @@ export function PasskeyManager({ wallet }: PasskeyManagerProps) {
     setIsCreating(true);
     setError(null);
     try {
-      await passkey.addPasskey({ name: 'BountyLane Wallet' });
+      await passkey.addPasskey({ name: 'GRIP Wallet' });
       router.refresh(); // Refresh to show new wallet
     } catch (err) {
       setError('Failed to create wallet. Make sure your device supports passkeys.');
@@ -100,9 +100,7 @@ export function PasskeyManager({ wallet }: PasskeyManagerProps) {
         </div>
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">Name</span>
-          <span className="text-sm text-muted-foreground">
-            {wallet.name || 'BountyLane Wallet'}
-          </span>
+          <span className="text-sm text-muted-foreground">{wallet.name || 'GRIP Wallet'}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">Created</span>

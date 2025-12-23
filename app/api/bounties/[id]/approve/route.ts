@@ -417,7 +417,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       await approveBountySubmissionAsFunder(submissionToApprove.id, session.user.id, false);
 
       // Send pending payment notification (if contributor has account)
-      // Design Decision: Only notify if contributor already has BountyLane account (but no wallet)
+      // Design Decision: Only notify if contributor already has GRIP account (but no wallet)
       // - New users won't see notification anyway (not logged in)
       // - Funder gets claim URL in response for manual sharing
       try {

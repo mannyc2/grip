@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 import { NotificationsList } from './_components/notifications-list';
 
 export const metadata = {
-  title: 'Notifications | BountyLane',
+  title: 'Notifications | GRIP',
 };
 
 /**
@@ -15,7 +15,7 @@ export const metadata = {
  *
  * Data Fetching Pattern:
  * Server component calls getPaginatedNotifications() directly (no API route).
- * This follows BountyLane's convention: "Server functions for reads, API routes for mutations."
+ * This follows GRIP's convention: "Server functions for reads, API routes for mutations."
  */
 export default async function NotificationsPage({
   searchParams,

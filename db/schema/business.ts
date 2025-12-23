@@ -130,7 +130,7 @@ export type ActivityAction = (typeof activityActions)[number];
  * Access Key Type Enum
  *
  * Tempo Access Key types for backend authorization.
- * BountyLane uses secp256k1 for backend signing (Turnkey-managed keys).
+ * GRIP uses secp256k1 for backend signing (Turnkey-managed keys).
  */
 export const accessKeyTypeEnum = pgEnum('access_key_type', ['secp256k1', 'p256', 'webauthn']);
 

@@ -11,8 +11,26 @@ const notoSans = Noto_Sans({
 });
 
 export const metadata: Metadata = {
-  title: 'BountyLane',
-  description: 'Open source bounties on Tempo blockchain',
+  title: {
+    default: 'GRIP - Git Reward & Incentive Platform',
+    template: '%s | GRIP',
+  },
+  description:
+    'Enterprise reward infrastructure for GitHub contributions. Pay contributors instantly with blockchain-backed bounties.',
+  metadataBase: new URL('https://usegrip.xyz'),
+  openGraph: {
+    title: 'GRIP - Git Reward & Incentive Platform',
+    description: 'Enterprise reward infrastructure for GitHub contributions',
+    url: 'https://usegrip.xyz',
+    siteName: 'GRIP',
+    locale: 'en_US',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'GRIP - Git Reward & Incentive Platform',
+    description: 'Enterprise reward infrastructure for GitHub contributions',
+  },
 };
 
 /**

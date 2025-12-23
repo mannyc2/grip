@@ -21,7 +21,7 @@ export function CreateWalletButton() {
     setIsCreating(true);
     setError(null);
     try {
-      await passkey.addPasskey({ name: 'BountyLane Wallet' });
+      await passkey.addPasskey({ name: 'GRIP Wallet' });
       // Refresh the page to show the new wallet
       router.refresh();
     } catch {

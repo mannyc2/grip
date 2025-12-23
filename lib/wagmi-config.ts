@@ -51,7 +51,7 @@ export const config = createConfig({
     }),
   ],
   // Disable auto-detection of injected wallets
-  // BountyLane uses treasury passkeys only, not external wallets
+  // GRIP uses treasury passkeys only, not external wallets
   multiInjectedProviderDiscovery: false,
   transports: {
     [tempo().id]: http(TEMPO_RPC_URL),

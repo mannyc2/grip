@@ -232,7 +232,7 @@ export async function getSubmissionsForBounty(bountyId: string) {
  * Used when PR is opened by someone who hasn't explicitly submitted.
  * Creates an implicit submission to track their work.
  *
- * Returns null if GitHub user hasn't signed up with BountyLane.
+ * Returns null if GitHub user hasn't signed up with GRIP.
  */
 export async function findOrCreateSubmissionForGitHubUser(
   bountyId: string,
@@ -245,7 +245,7 @@ export async function findOrCreateSubmissionForGitHubUser(
   const userIdBigInt = typeof githubUserId === 'string' ? BigInt(githubUserId) : githubUserId;
   const prIdBigInt = typeof githubPrId === 'string' ? BigInt(githubPrId) : githubPrId;
 
-  // First try to find BountyLane user by GitHub user ID
+  // First try to find GRIP user by GitHub user ID
   const [userRecord] = await db
     .select({ id: user.id })
     .from(user)
@@ -253,7 +253,7 @@ export async function findOrCreateSubmissionForGitHubUser(
     .limit(1);
 
   if (!userRecord) {
-    // User hasn't signed up with BountyLane yet
+    // User hasn't signed up with GRIP yet
     return null;
   }
 

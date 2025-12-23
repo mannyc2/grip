@@ -4,8 +4,8 @@ import { TurnkeyApiClient } from '@turnkey/sdk-server';
 /**
  * Turnkey client for HSM-backed backend key management
  *
- * BountyLane uses Turnkey to securely store and sign with backend keys for Access Key authorization.
- * No private keys are stored on BountyLane servers - all signing happens via Turnkey API.
+ * GRIP uses Turnkey to securely store and sign with backend keys for Access Key authorization.
+ * No private keys are stored on GRIP servers - all signing happens via Turnkey API.
  *
  * Setup required:
  * 1. Create Turnkey organization at https://app.turnkey.com
@@ -44,7 +44,7 @@ function createTurnkeyClient() {
 export const turnkey = createTurnkeyClient();
 
 /**
- * Get BountyLane's backend wallet address for given network
+ * Get GRIP's backend wallet address for given network
  *
  * Backend wallets are pre-created in Turnkey dashboard with naming convention:
  * - "bountylane-backend-testnet" for Tempo testnet

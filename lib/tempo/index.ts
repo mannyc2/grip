@@ -1,5 +1,5 @@
 /**
- * Tempo blockchain utilities for BountyLane
+ * Tempo blockchain utilities for GRIP
  *
  * Tempo is a Layer-1 blockchain for stablecoin payments.
  *

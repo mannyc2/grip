@@ -100,8 +100,8 @@ export async function getUserById(userId: string) {
 /**
  * Get bounty activity for any GitHub user (permissionless)
  *
- * Returns bounty data even if user hasn't signed up with BountyLane.
- * Used for displaying GitHub profiles with overlay of BountyLane activity.
+ * Returns bounty data even if user hasn't signed up with GRIP.
+ * Used for displaying GitHub profiles with overlay of GRIP activity.
  */
 export async function getBountyDataByGitHubId(githubId: bigint | string) {
   const githubIdBigInt = typeof githubId === 'string' ? BigInt(githubId) : githubId;
@@ -178,9 +178,9 @@ export async function getBountyDataByGitHubId(githubId: bigint | string) {
 }
 
 /**
- * Find BountyLane user by GitHub username
+ * Find GRIP user by GitHub username
  *
- * Used by webhooks to map GitHub PR authors to BountyLane users.
+ * Used by webhooks to map GitHub PR authors to GRIP users.
  * Returns user ID if they've signed up, null otherwise.
  *
  * Note: user.name stores GitHub username from OAuth (set in lib/auth.ts)
@@ -196,7 +196,7 @@ export async function findUserByGitHubUsername(githubUsername: string): Promise<
 }
 
 /**
- * Find BountyLane user by canonical GitHub user ID
+ * Find GRIP user by canonical GitHub user ID
  *
  * Preferred over username lookup (usernames can change).
  * Uses user.github_user_id added in schema redesign.

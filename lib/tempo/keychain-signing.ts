@@ -43,7 +43,7 @@ async function signWithTurnkey(
   txHash: `0x${string}`,
   network: 'testnet' | 'mainnet'
 ): Promise<{ r: bigint; s: bigint; yParity: 0 | 1 }> {
-  const walletName = `bountylane-backend-${network}`;
+  const walletName = `grip-backend-${network}`;
 
   if (!process.env.TURNKEY_ORGANIZATION_ID) {
     throw new Error('TURNKEY_ORGANIZATION_ID not configured');

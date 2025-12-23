@@ -18,7 +18,7 @@ interface ProjectPageProps {
  * Project overview page (public) - PERMISSIONLESS
  *
  * Works for ANY public GitHub repository, whether or not it's been "claimed".
- * Fetches from GitHub API first, then overlays BountyLane data if available.
+ * Fetches from GitHub API first, then overlays GRIP data if available.
  *
  * Claiming is optional and only unlocks:
  * - Webhook auto-install (for PR merge detection)

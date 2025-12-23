@@ -379,7 +379,7 @@ export const tempo = (config: TempoPluginConfig) => {
               authorizationSignature: signature,
               authorizationHash: hash,
               status: 'active' as const,
-              label: label || config.accessKeyDefaults?.label || 'BountyLane Auto-pay',
+              label: label || config.accessKeyDefaults?.label || 'GRIP Auto-pay',
             })
             .returning();
 
@@ -393,7 +393,7 @@ export const tempo = (config: TempoPluginConfig) => {
               backendWalletAddress: keyId,
               limits: limitsJson,
               expiry: expiry || null,
-              label: label || config.accessKeyDefaults?.label || 'BountyLane Auto-pay',
+              label: label || config.accessKeyDefaults?.label || 'GRIP Auto-pay',
             },
           });
 

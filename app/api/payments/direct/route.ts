@@ -16,7 +16,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 /**
  * POST /api/payments/direct
  *
- * Send direct payment to GitHub user (with or without BountyLane account)
+ * Send direct payment to GitHub user (with or without GRIP account)
  *
  * Request body:
  * - recipientUsername: GitHub username
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
     // 2. Lookup recipient by GitHub username
     const recipient = await getUserByName(recipientUsername);
 
-    // 3. Verify recipient exists on GitHub (even if no BountyLane account)
+    // 3. Verify recipient exists on GitHub (even if no GRIP account)
     const githubUser = await fetchGitHubUser(recipientUsername);
     if (!githubUser) {
       return NextResponse.json({ error: 'GitHub user not found' }, { status: 404 });
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
     let recipientUserId: string;
 
     if (recipient?.tempoAddress) {
-      // Recipient has BountyLane account + wallet
+      // Recipient has GRIP account + wallet
       recipientAddress = recipient.tempoAddress;
       recipientUserId = recipient.id;
 
@@ -189,7 +189,7 @@ export async function POST(request: NextRequest) {
         console.log(`[direct-payment] Created pending payment: ${pendingPayment.id}`);
 
         // Send pending payment notification (if recipient has account)
-        // Design Decision: Only notify if recipient already has BountyLane account (but no wallet)
+        // Design Decision: Only notify if recipient already has GRIP account (but no wallet)
         // - New users won't see notification anyway (not logged in)
         // - Sender gets claim URL in response for manual sharing
         try {
@@ -309,7 +309,7 @@ export async function POST(request: NextRequest) {
             txHash,
           });
 
-          // Only notify recipient if they have a BountyLane account
+          // Only notify recipient if they have a GRIP account
           if (!isCustodial && recipient) {
             await notifyDirectPaymentReceived({
               recipientId: recipient.id,

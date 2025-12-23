@@ -83,7 +83,7 @@ export function AccessKeyManager({ initialKeys, credentialId }: AccessKeyManager
               <CardTitle>Auto-Pay Authorization</CardTitle>
             </div>
             <CardDescription>
-              Grant BountyLane permission to automatically sign bounty payouts on your behalf
+              Grant GRIP permission to automatically sign bounty payouts on your behalf
             </CardDescription>
           </div>
           {activeKeys.length === 0 && (

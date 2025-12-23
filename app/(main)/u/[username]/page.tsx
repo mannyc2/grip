@@ -12,11 +12,11 @@ interface UserProfilePageProps {
 /**
  * User profile page (public) - PERMISSIONLESS
  *
- * Works for ANY GitHub user, whether they've signed up with BountyLane or not.
- * Fetches from GitHub API first, then overlays BountyLane data if available.
+ * Works for ANY GitHub user, whether they've signed up with GRIP or not.
+ * Fetches from GitHub API first, then overlays GRIP data if available.
  *
  * This enables permissionless browsing - any GitHub profile can be viewed
- * with their BountyLane activity shown if they've interacted with the platform.
+ * with their GRIP activity shown if they've interacted with the platform.
  */
 export default async function UserProfilePage({ params }: UserProfilePageProps) {
   const { username } = await params;
@@ -33,10 +33,10 @@ export default async function UserProfilePage({ params }: UserProfilePageProps) 
     notFound();
   }
 
-  // 2. Check if they've signed up with BountyLane
+  // 2. Check if they've signed up with GRIP
   const bountyLaneUser = await getUserByName(username);
 
-  // 3. Get their BountyLane activity (may be empty)
+  // 3. Get their GRIP activity (may be empty)
   // getBountyDataByGitHubId expects BigInt, githubUser.id is number from GitHub API
   const bountyData = await getBountyDataByGitHubId(BigInt(githubUser.id));
 

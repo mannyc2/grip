@@ -376,7 +376,7 @@ export async function notifyDirectPaymentReceived(params: {
  * Trigger: Funder approves bounty OR sends direct payment to user without account
  * Icon: 💸
  *
- * Design Decision: Only send if contributor already has BountyLane account
+ * Design Decision: Only send if contributor already has GRIP account
  * - New users won't see notification anyway (not logged in)
  * - Funder gets claim URL in API response for manual sharing
  * - Alternative rejected: Email/GitHub notifications (infrastructure doesn't exist yet)

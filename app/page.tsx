@@ -3,7 +3,13 @@ import { Button } from '@/components/ui/button';
 import { getOpenBounties } from '@/db/queries/bounties';
 import { getRepoSettingsCount } from '@/db/queries/repo-settings';
 import type { Bounty } from '@/lib/types';
+import type { Metadata } from 'next';
 import Link from 'next/link';
+
+export const metadata: Metadata = {
+  title: 'Home',
+  description: 'Discover and fund GitHub bounties on GRIP',
+};
 
 export default async function HomePage() {
   // Fetch stats from database
@@ -211,27 +217,24 @@ export default async function HomePage() {
         <div className="container">
           <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span>BountyLane</span>
+              <span>GRIP</span>
               <span className="mx-2">·</span>
               <span>Built on Tempo</span>
             </div>
             <div className="flex gap-6 text-sm text-muted-foreground">
               <a
-                href="https://docs.bountylane.dev"
+                href="https://docs.usegrip.xyz"
                 className="hover:text-foreground transition-colors"
               >
                 Docs
               </a>
               <a
-                href="https://github.com/bountylane"
+                href="https://github.com/wozhendeai/grip"
                 className="hover:text-foreground transition-colors"
               >
                 GitHub
               </a>
-              <a
-                href="https://discord.gg/bountylane"
-                className="hover:text-foreground transition-colors"
-              >
+              <a href="https://discord.gg/grip" className="hover:text-foreground transition-colors">
                 Discord
               </a>
             </div>

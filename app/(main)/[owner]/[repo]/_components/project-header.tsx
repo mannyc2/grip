@@ -24,7 +24,7 @@ interface ProjectHeaderProps {
  * - Repo name + description (from GitHub)
  * - GitHub stats: Stars, forks, language
  * - Claimed badge (if repo is claimed)
- * - BountyLane stats: Open bounties, Completed, Total paid
+ * - GRIP stats: Open bounties, Completed, Total paid
  * - Settings link (if user has permission)
  */
 export function ProjectHeader({

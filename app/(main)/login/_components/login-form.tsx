@@ -71,7 +71,7 @@ export function LoginForm() {
     <div className="w-full max-w-md space-y-6">
       {/* Header */}
       <div className="text-center space-y-2">
-        <h2 className="text-2xl font-semibold">Sign in to BountyLane</h2>
+        <h2 className="text-2xl font-semibold">Sign in to GRIP</h2>
         <p className="text-sm text-muted-foreground">Connect with GitHub to get started</p>
       </div>
 

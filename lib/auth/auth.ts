@@ -38,7 +38,7 @@ export const auth = betterAuth({
     // P-256 only (ES256, algorithm ID -7) for Tempo compatibility
     passkey({
       rpID: process.env.NEXT_PUBLIC_RP_ID || 'localhost',
-      rpName: 'BountyLane',
+      rpName: 'GRIP',
       origin: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
     }),
 
@@ -69,7 +69,7 @@ export const auth = betterAuth({
 
       // Default Access Key settings
       accessKeyDefaults: {
-        label: 'BountyLane Auto-pay',
+        label: 'GRIP Auto-pay',
       },
     }),
   ],
@@ -95,7 +95,7 @@ export const auth = betterAuth({
           const githubResponse = await fetch(`https://api.github.com/user/${account.accountId}`, {
             headers: {
               Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-              'User-Agent': 'BountyLane',
+              'User-Agent': 'GRIP',
             },
           });
 

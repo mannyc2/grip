@@ -11,7 +11,7 @@ import { ThemeProvider as NextThemesProvider, type ThemeProviderProps } from 'ne
  * - Lightweight (~1kb)
  * - Works with Tailwind's class-based dark mode
  *
- * Default theme is 'dark' to maintain BountyLane's terminal-noir aesthetic.
+ * Default theme is 'dark' to maintain GRIP's terminal-noir aesthetic.
  */
 export function ThemeProvider({ children, ...props }: ThemeProviderProps) {
   return (

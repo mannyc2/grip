@@ -39,7 +39,7 @@ export function CreateWalletModal({
       setError(null);
 
       // better-auth passkey creation
-      await passkey.addPasskey({ name: 'BountyLane Wallet' });
+      await passkey.addPasskey({ name: 'GRIP Wallet' });
 
       // Fetch created wallet (has tempoAddress field from tempo plugin)
       const res = await fetch('/api/auth/tempo/passkeys');

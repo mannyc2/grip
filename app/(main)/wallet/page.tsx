@@ -3,12 +3,18 @@ import { getPayoutsByUser, getSentDirectPayments } from '@/db/queries/payouts';
 import { getPendingPaymentsByFunder } from '@/db/queries/pending-payments';
 import { getSession } from '@/lib/auth/auth-server';
 import { Wallet as WalletIcon } from 'lucide-react';
+import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { ActivityFeed } from './_components/activity-feed';
 import { BalanceDisplay } from './_components/balance-display';
 import { CreateWalletButton } from './_components/create-wallet-button';
 import { PendingLiabilitiesWarning } from './_components/pending-liabilities-warning';
 import { WalletActions } from './_components/wallet-actions';
+
+export const metadata: Metadata = {
+  title: 'Wallet',
+  description: 'Manage your GRIP wallet and payments',
+};
 
 /**
  * Wallet page (protected) - Server component with small client components

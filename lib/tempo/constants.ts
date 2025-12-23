@@ -52,10 +52,10 @@ export const TEMPO_TOKENS = {
 } as const;
 
 /**
- * BountyLane backend wallet addresses (Turnkey HSM-backed)
+ * GRIP backend wallet addresses (Turnkey HSM-backed)
  *
  * These addresses are used for Access Key authorization (auto-signing).
- * The private keys are stored in Turnkey HSM and never exposed to BountyLane servers.
+ * The private keys are stored in Turnkey HSM and never exposed to GRIP servers.
  *
  * Created via: pnpm tsx scripts/init-turnkey-wallets.ts
  * See docs/TURNKEY_SETUP.md for setup instructions

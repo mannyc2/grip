@@ -88,7 +88,7 @@ export async function UserProfile({
             )}
           </div>
 
-          {/* BountyLane Stats */}
+          {/* GRIP Stats */}
           <div className="mt-6 flex items-center gap-6 text-sm text-muted-foreground">
             <span className="flex items-center gap-1.5">
               <span className="text-success font-medium">

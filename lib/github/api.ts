@@ -96,7 +96,7 @@ type GitHubEvent = {
 export const BOUNTY_LABEL = {
   name: 'bounty',
   color: '2ea44f', // GitHub green
-  description: 'This issue has a bounty attached via BountyLane',
+  description: 'This issue has a bounty attached via GRIP',
 };
 
 // ============ User Operations ============
@@ -507,14 +507,14 @@ export function generateBountyComment(params: {
 
   return `## 💰 Bounty: $${amount} ${tokenSymbol}
 
-This issue has a bounty attached via [BountyLane](https://bountylane.xyz).
+This issue has a bounty attached via [GRIP](https://usegrip.xyz).
 
 **Amount:** $${amount} ${tokenSymbol}
 **Claim deadline:** ${claimDeadlineDays} days after claiming
 
 ### How to claim
 
-1. Sign in to BountyLane with your GitHub account
+1. Sign in to GRIP with your GitHub account
 2. Create a wallet (just needs your fingerprint/FaceID)
 3. Click "Claim Bounty" on the bounty page
 4. Submit a PR that fixes this issue
@@ -523,5 +523,5 @@ This issue has a bounty attached via [BountyLane](https://bountylane.xyz).
 [**View bounty details →**](${bountyUrl})
 
 ---
-<sub>Powered by [BountyLane](https://bountylane.xyz) - Open source bounties on Tempo blockchain</sub>`;
+<sub>Powered by [GRIP](https://usegrip.xyz) - Open source bounties on Tempo blockchain</sub>`;
 }

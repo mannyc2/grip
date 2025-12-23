@@ -88,7 +88,7 @@ export function Navbar() {
               href="/"
               className="font-bold text-lg tracking-tight hover:text-muted-foreground transition-colors"
             >
-              BountyLane
+              GRIP
             </Link>
 
             {/* Nav Links - Using NavigationMenu for accessibility and keyboard navigation */}

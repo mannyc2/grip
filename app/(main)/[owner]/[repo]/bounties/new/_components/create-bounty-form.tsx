@@ -569,7 +569,7 @@ export function CreateBountyForm({ githubRepo, projectId, owner, repo }: CreateB
         <ul className="mt-2 space-y-1 text-sm text-muted-foreground">
           <li>• A &quot;bounty&quot; label is added to the GitHub issue</li>
           <li>• A comment is posted on the issue with bounty details</li>
-          <li>• The bounty becomes visible to contributors on BountyLane</li>
+          <li>• The bounty becomes visible to contributors on GRIP</li>
           <li>• Contributors can claim and start working on the issue</li>
         </ul>
       </div>

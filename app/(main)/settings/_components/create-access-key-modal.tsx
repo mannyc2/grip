@@ -95,7 +95,7 @@ export function CreateAccessKeyModal({
           keyType: params.keyType,
           limits: params.limits,
           signature,
-          label: 'BountyLane Auto-pay',
+          label: 'GRIP Auto-pay',
         }),
       });
 
@@ -168,7 +168,7 @@ export function CreateAccessKeyModal({
                   placeholder="10000"
                 />
                 <p className="caption text-muted-foreground">
-                  Maximum amount in USDC that BountyLane can spend on your behalf
+                  Maximum amount in USDC that GRIP can spend on your behalf
                 </p>
               </div>
 
