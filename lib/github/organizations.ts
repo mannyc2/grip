@@ -74,6 +74,11 @@ export async function getUserOrganizations(token: string): Promise<GitHubOrganiz
   const res = await githubFetchWithToken(token, '/user/orgs');
 
   if (!res.ok) {
+    if (res.status === 403) {
+      // User needs to grant read:org scope - handled by UI re-auth flow
+      console.info('GitHub organizations: read:org scope required');
+      throw new Error('GitHub API error: 403');
+    }
     console.error(`Failed to fetch user orgs: ${res.status}`);
     return [];
   }

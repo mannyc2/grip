@@ -59,8 +59,22 @@ export async function GET() {
       organizations: filteredOrgs,
     });
   } catch (error) {
+    // Detect 403 scope errors (user needs to grant permission)
+    if (error instanceof Error && error.message.includes('403')) {
+      console.info('User needs to grant read:org scope - returning re-auth prompt');
+      return NextResponse.json(
+        {
+          error: 'INSUFFICIENT_SCOPE',
+          message: 'Additional permissions required to access organizations',
+          requiredScope: 'read:org',
+        },
+        { status: 403 }
+      );
+    }
+
     console.error('Failed to fetch GitHub organizations:', error);
 
+    // Generic error response
     const errorMessage =
       error instanceof Error
         ? error.message

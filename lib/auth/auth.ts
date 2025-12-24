@@ -30,6 +30,9 @@ export const auth = betterAuth({
     provider: 'pg',
     schema,
   }),
+  experimental: {
+    joins: true,
+  },
 
   // GitHub OAuth for identity
   socialProviders: {
@@ -137,9 +140,14 @@ export const auth = betterAuth({
       },
 
       schema: {
+        user: {
+          additionalFields: {
+            githubUserId: { type: 'string', required: false },
+          },
+        },
         organization: {
           additionalFields: {
-            githubOrgId: { type: 'number', required: false },
+            githubOrgId: { type: 'string', required: false },
             githubOrgLogin: { type: 'string', required: false },
             syncMembership: { type: 'boolean', defaultValue: false },
             lastSyncedAt: { type: 'date', required: false },

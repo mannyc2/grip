@@ -1,8 +1,9 @@
 import { passkeyClient } from '@better-auth/passkey/client';
 import { createAuthClient } from 'better-auth/react';
-import { organizationClient } from 'better-auth/client/plugins';
+import { inferOrgAdditionalFields, organizationClient } from 'better-auth/client/plugins';
 import { ac, billingAdmin, bountyManager, member, owner } from './permissions';
 import { tempoClient } from './tempo-plugin/tempo-client';
+import type { auth } from './auth';
 
 /**
  * better-auth client configuration
@@ -21,6 +22,7 @@ export const authClient = createAuthClient({
     organizationClient({
       ac,
       roles: { owner, billingAdmin, bountyManager, member },
+      schema: inferOrgAdditionalFields<typeof auth>(),
     }),
   ],
 });

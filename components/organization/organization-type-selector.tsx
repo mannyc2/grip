@@ -30,7 +30,7 @@ export function OrganizationTypeSelector({ onSelectType }: OrganizationTypeSelec
             <GitBranch className="h-5 w-5 text-primary" />
           </div>
           <div className="flex-1">
-            <h3 className="heading-4">Link GitHub Organization</h3>
+            <h3 className="text-base font-semibold">Link GitHub Organization</h3>
             <p className="caption text-muted-foreground mt-1">
               Import from an existing GitHub org you admin
             </p>
@@ -49,7 +49,7 @@ export function OrganizationTypeSelector({ onSelectType }: OrganizationTypeSelec
             <Sparkles className="h-5 w-5 text-primary" />
           </div>
           <div className="flex-1">
-            <h3 className="heading-4">Create Standalone</h3>
+            <h3 className="text-base font-semibold">Create Standalone</h3>
             <p className="caption text-muted-foreground mt-1">Start fresh, invite users manually</p>
           </div>
         </div>

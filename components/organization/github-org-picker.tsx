@@ -3,7 +3,8 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { AlertCircle, Loader2, Search } from 'lucide-react';
+import { authClient } from '@/lib/auth/auth-client';
+import { AlertCircle, Loader2, Lock, Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 /**
@@ -35,6 +36,8 @@ export function GitHubOrgPicker({ onSelect, onBack }: GitHubOrgPickerProps) {
   const [orgs, setOrgs] = useState<GitHubOrg[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<'fetch' | 'insufficient_scope' | null>(null);
+  const [isReauthorizing, setIsReauthorizing] = useState(false);
   const [search, setSearch] = useState('');
 
   useEffect(() => {
@@ -43,11 +46,22 @@ export function GitHubOrgPicker({ onSelect, onBack }: GitHubOrgPickerProps) {
         const res = await fetch('/api/github/organizations');
         if (!res.ok) {
           const data = await res.json();
-          throw new Error(data.error || 'Failed to fetch organizations');
+
+          // Check for insufficient scope error
+          if (data.error === 'INSUFFICIENT_SCOPE') {
+            setErrorType('insufficient_scope');
+            return;
+          }
+
+          setErrorType('fetch');
+          setError(data.error || 'Failed to fetch organizations');
+          return;
         }
         const { organizations } = await res.json();
         setOrgs(organizations);
+        setErrorType(null);
       } catch (err) {
+        setErrorType('fetch');
         setError(err instanceof Error ? err.message : 'Failed to load organizations');
       } finally {
         setLoading(false);
@@ -56,6 +70,27 @@ export function GitHubOrgPicker({ onSelect, onBack }: GitHubOrgPickerProps) {
 
     fetchOrgs();
   }, []);
+
+  async function handleGrantAccess() {
+    setIsReauthorizing(true);
+    try {
+      await authClient.linkSocial({
+        provider: 'github',
+        scopes: ['read:org'],
+        callbackURL: window.location.pathname,
+      });
+    } catch (error) {
+      console.error('Re-authorization failed:', error);
+      setIsReauthorizing(false);
+      setErrorType('fetch');
+      setError('Failed to grant access. Please try again.');
+    }
+  }
+
+  function handleCancelReauth() {
+    setErrorType('fetch');
+    setError('Additional permissions needed. Try again when ready.');
+  }
 
   const filteredOrgs = orgs.filter(
     (org) =>
@@ -72,7 +107,44 @@ export function GitHubOrgPicker({ onSelect, onBack }: GitHubOrgPickerProps) {
     );
   }
 
-  if (error) {
+  // Insufficient scope state - show re-authorization prompt
+  if (errorType === 'insufficient_scope') {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-start gap-3 p-4 bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200/50 dark:border-blue-800/50 rounded-lg">
+          <Lock className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="body-sm font-medium text-blue-900 dark:text-blue-100">
+              Additional Permission Required
+            </p>
+            <p className="body-xs text-blue-800 dark:text-blue-200 mt-1">
+              GRIP needs permission to access your GitHub organizations. This is needed to verify
+              you're an admin and authorize the link.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex gap-2">
+          <Button onClick={handleGrantAccess} disabled={isReauthorizing} className="flex-1">
+            {isReauthorizing ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                Redirecting...
+              </>
+            ) : (
+              'Grant Access'
+            )}
+          </Button>
+          <Button variant="outline" onClick={handleCancelReauth} disabled={isReauthorizing}>
+            Cancel
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // Generic error state
+  if (errorType === 'fetch' || error) {
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-lg">

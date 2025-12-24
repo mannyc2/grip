@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { authClient } from '@/lib/auth/auth-client';
+import { AlertCircle } from 'lucide-react';
 import { useState } from 'react';
 import { GitHubOrgPicker } from './github-org-picker';
 import { OrganizationTypeSelector } from './organization-type-selector';
@@ -42,17 +43,22 @@ export function CreateOrganizationModal({
   onSuccess,
 }: CreateOrganizationModalProps) {
   const [step, setStep] = useState<Step>('select-type');
+  const [error, setError] = useState<string | null>(null);
 
   // Reset to first step when modal closes
   function handleOpenChange(open: boolean) {
     onOpenChange(open);
     if (!open) {
-      setTimeout(() => setStep('select-type'), 300);
+      setTimeout(() => {
+        setStep('select-type');
+        setError(null);
+      }, 300);
     }
   }
 
   // Step 1: Type selection handler
   function handleSelectType(type: 'github' | 'standalone') {
+    setError(null); // Clear error when changing steps
     if (type === 'github') {
       setStep('github-picker');
     } else {
@@ -68,35 +74,57 @@ export function CreateOrganizationModal({
     name: string | null;
   }) {
     try {
+      setError(null);
+
       // Create organization linked to GitHub
-      await authClient.organization.create({
+      const result = await authClient.organization.create({
         name: githubOrg.name || githubOrg.login,
         slug: githubOrg.login.toLowerCase(),
         logo: githubOrg.avatar_url,
-        metadata: {
-          githubOrgId: githubOrg.id,
-          githubOrgLogin: githubOrg.login,
-          syncMembership: true, // Enable auto-sync
-        },
+        githubOrgId: githubOrg.id.toString(),
+        githubOrgLogin: githubOrg.login,
+        syncMembership: true,
       });
+
+      // Set as active - triggers switcher refetch via session change
+      if (result.data?.id) {
+        await authClient.organization.setActive({
+          organizationId: result.data.id,
+        });
+      }
 
       onSuccess?.();
       onOpenChange(false);
     } catch (error) {
       console.error('Failed to create GitHub-linked org:', error);
-      // Error handled in child component
+      setError('Failed to create organization. Please try again.');
     }
   }
 
   // Step 2b: Standalone form submission handler
   async function handleStandaloneSubmit(data: { name: string; slug: string }) {
-    await authClient.organization.create({
-      name: data.name,
-      slug: data.slug,
-    });
+    try {
+      setError(null);
 
-    onSuccess?.();
-    onOpenChange(false);
+      const result = await authClient.organization.create({
+        name: data.name,
+        slug: data.slug,
+        syncMembership: false,
+      });
+
+      // Set as active - triggers switcher refetch via session change
+      if (result.data?.id) {
+        await authClient.organization.setActive({
+          organizationId: result.data.id,
+        });
+      }
+
+      onSuccess?.();
+      onOpenChange(false);
+    } catch (error) {
+      console.error('Failed to create standalone org:', error);
+      setError('Failed to create organization. Please try again.');
+    }
   }
 
   return (
@@ -114,6 +142,13 @@ export function CreateOrganizationModal({
             {step === 'standalone-form' && 'Enter your organization details'}
           </DialogDescription>
         </DialogHeader>
+
+        {error && (
+          <div className="flex items-center gap-3 p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+            <AlertCircle className="h-5 w-5 text-destructive" />
+            <p className="body-sm text-destructive">{error}</p>
+          </div>
+        )}
 
         {step === 'select-type' && <OrganizationTypeSelector onSelectType={handleSelectType} />}
 
