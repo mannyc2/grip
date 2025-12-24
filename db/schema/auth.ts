@@ -1,108 +1,240 @@
-import { bigint, boolean, integer, pgTable, text, timestamp, varchar } from 'drizzle-orm/pg-core';
-
 /**
- * better-auth schema with Tempo plugin extension
+ * better-auth schema with organization plugin and Tempo plugin extension
  *
  * Tables:
- * - user: Identity from GitHub OAuth
- * - session: Login sessions
- * - account: OAuth provider accounts
+ * - user: Identity from GitHub OAuth (stores GitHub login as name, NOT display name)
+ * - session: Login sessions with active organization tracking
+ * - account: OAuth provider accounts (GitHub OAuth tokens stored here)
  * - passkey: WebAuthn credentials + tempoAddress (Tempo plugin extension)
+ * - verification: Email/token verification
+ * - organization: Multi-user organizations with optional GitHub linking
+ * - member: Organization membership with source tracking (github_sync vs manual_invite)
+ * - invitation: Organization invitations
  *
- * IMPORTANT: Auth tables use mode: 'date' for timestamp columns to match
- * Better Auth's internal expectations. Better Auth handles its own JSON
- * serialization for these tables.
+ * IMPORTANT: Auth tables use default timestamp mode to match Better Auth's expectations.
+ * Better Auth handles its own JSON serialization for these tables.
  */
+import { relations } from 'drizzle-orm';
+import {
+  pgTable,
+  text,
+  timestamp,
+  boolean,
+  integer,
+  bigint,
+  varchar,
+  index,
+} from 'drizzle-orm/pg-core';
 
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
-  emailVerified: boolean('email_verified').default(false),
+  emailVerified: boolean('email_verified').default(false).notNull(),
   image: text('image'),
-  // Canonical GitHub user ID (populated from account.accountId where providerId='github')
-  // Used for GitHub-related operations and canonical references
-  // BigInt mode to handle GitHub IDs that may exceed 2^53
+  // Canonical GitHub user ID - must be bigint to handle IDs > 2^53
   githubUserId: bigint('github_user_id', { mode: 'bigint' }).unique(),
-  createdAt: timestamp('created_at', { mode: 'date' }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { mode: 'date' })
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+  updatedAt: timestamp('updated_at')
     .defaultNow()
-    .notNull()
-    .$onUpdate(() => new Date()),
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
 });
 
-export const session = pgTable('session', {
+export const session = pgTable(
+  'session',
+  {
+    id: text('id').primaryKey(),
+    expiresAt: timestamp('expires_at').notNull(),
+    token: text('token').notNull().unique(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    ipAddress: text('ip_address'),
+    userAgent: text('user_agent'),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    activeOrganizationId: text('active_organization_id'),
+  },
+  (table) => [index('session_userId_idx').on(table.userId)]
+);
+
+export const account = pgTable(
+  'account',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id').notNull(),
+    providerId: text('provider_id').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    accessToken: text('access_token'),
+    refreshToken: text('refresh_token'),
+    idToken: text('id_token'),
+    accessTokenExpiresAt: timestamp('access_token_expires_at'),
+    refreshTokenExpiresAt: timestamp('refresh_token_expires_at'),
+    scope: text('scope'),
+    password: text('password'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index('account_userId_idx').on(table.userId)]
+);
+
+export const verification = pgTable(
+  'verification',
+  {
+    id: text('id').primaryKey(),
+    identifier: text('identifier').notNull(),
+    value: text('value').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index('verification_identifier_idx').on(table.identifier)]
+);
+
+export const passkey = pgTable(
+  'passkey',
+  {
+    id: text('id').primaryKey(),
+    name: text('name'),
+    publicKey: text('public_key').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    credentialID: text('credential_id').notNull(),
+    counter: integer('counter').notNull(),
+    deviceType: text('device_type').notNull(),
+    backedUp: boolean('backed_up').notNull(),
+    transports: text('transports'),
+    createdAt: timestamp('created_at'),
+    aaguid: text('aaguid'),
+    // Tempo plugin extension - derived from P256 public key
+    tempoAddress: varchar('tempo_address', { length: 42 }).unique(),
+  },
+  (table) => [
+    index('passkey_userId_idx').on(table.userId),
+    index('passkey_credentialID_idx').on(table.credentialID),
+  ]
+);
+
+export const organization = pgTable('organization', {
   id: text('id').primaryKey(),
-  userId: text('user_id')
-    .notNull()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  token: text('token').notNull().unique(),
-  expiresAt: timestamp('expires_at', { mode: 'date' }).notNull(),
-  ipAddress: text('ip_address'),
-  userAgent: text('user_agent'),
-  createdAt: timestamp('created_at', { mode: 'date' }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { mode: 'date' })
-    .defaultNow()
-    .notNull()
-    .$onUpdate(() => new Date()),
+  name: text('name').notNull(),
+  slug: text('slug').notNull().unique(),
+  logo: text('logo'),
+  createdAt: timestamp('created_at').notNull(),
+  metadata: text('metadata'),
+  // GitHub org ID - must be bigint to handle IDs > 2^53
+  githubOrgId: bigint('github_org_id', { mode: 'bigint' }).unique(),
+  githubOrgLogin: varchar('github_org_login', { length: 39 }),
+  syncMembership: boolean('sync_membership').default(false),
+  lastSyncedAt: timestamp('last_synced_at'),
 });
 
-export const account = pgTable('account', {
-  id: text('id').primaryKey(),
-  userId: text('user_id')
-    .notNull()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  accountId: text('account_id').notNull(),
-  providerId: text('provider_id').notNull(),
-  accessToken: text('access_token'),
-  refreshToken: text('refresh_token'),
-  accessTokenExpiresAt: timestamp('access_token_expires_at', { mode: 'date' }),
-  refreshTokenExpiresAt: timestamp('refresh_token_expires_at', { mode: 'date' }),
-  scope: text('scope'),
-  idToken: text('id_token'),
-  password: text('password'),
-  createdAt: timestamp('created_at', { mode: 'date' }).defaultNow().notNull(),
-  updatedAt: timestamp('updated_at', { mode: 'date' })
-    .defaultNow()
-    .notNull()
-    .$onUpdate(() => new Date()),
-});
+export const member = pgTable(
+  'member',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    role: text('role').default('member').notNull(),
+    createdAt: timestamp('created_at').notNull(),
+    sourceType: varchar('source_type', { length: 20 }).default('manual_invite'),
+    githubOrgRole: varchar('github_org_role', { length: 20 }),
+  },
+  (table) => [
+    index('member_organizationId_idx').on(table.organizationId),
+    index('member_userId_idx').on(table.userId),
+  ]
+);
 
-export const verification = pgTable('verification', {
-  id: text('id').primaryKey(),
-  identifier: text('identifier').notNull(),
-  value: text('value').notNull(),
-  expiresAt: timestamp('expires_at', { mode: 'date' }).notNull(),
-  createdAt: timestamp('created_at', { mode: 'date' }).defaultNow(),
-  updatedAt: timestamp('updated_at', { mode: 'date' })
-    .defaultNow()
-    .$onUpdate(() => new Date()),
-});
+export const invitation = pgTable(
+  'invitation',
+  {
+    id: text('id').primaryKey(),
+    organizationId: text('organization_id')
+      .notNull()
+      .references(() => organization.id, { onDelete: 'cascade' }),
+    email: text('email').notNull(),
+    role: text('role'),
+    status: text('status').default('pending').notNull(),
+    expiresAt: timestamp('expires_at').notNull(),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    inviterId: text('inviter_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+  },
+  (table) => [
+    index('invitation_organizationId_idx').on(table.organizationId),
+    index('invitation_email_idx').on(table.email),
+  ]
+);
 
-/**
- * Passkey table - extended by Tempo plugin
- *
- * The tempoAddress field is populated after passkey registration
- * by deriving the address from the P256 public key:
- *   tempoAddress = '0x' + keccak256(x || y).slice(-40)
- */
-export const passkey = pgTable('passkey', {
-  id: text('id').primaryKey(),
-  userId: text('user_id')
-    .notNull()
-    .references(() => user.id, { onDelete: 'cascade' }),
-  name: text('name'),
-  publicKey: text('public_key').notNull(),
-  credentialID: text('credential_id').notNull().unique(),
-  counter: integer('counter').default(0),
-  deviceType: text('device_type'),
-  backedUp: boolean('backed_up').default(false),
-  transports: text('transports'),
-  aaguid: text('aaguid'),
+export const userRelations = relations(user, ({ many }) => ({
+  sessions: many(session),
+  accounts: many(account),
+  passkeys: many(passkey),
+  members: many(member),
+  invitations: many(invitation),
+}));
 
-  // TEMPO PLUGIN EXTENSION
-  // Derived from P256 public key: keccak256(x || y).slice(-40)
-  tempoAddress: varchar('tempo_address', { length: 42 }).unique(),
+export const sessionRelations = relations(session, ({ one }) => ({
+  user: one(user, {
+    fields: [session.userId],
+    references: [user.id],
+  }),
+}));
 
-  createdAt: timestamp('created_at', { mode: 'string' }).defaultNow().notNull(),
-});
+export const accountRelations = relations(account, ({ one }) => ({
+  user: one(user, {
+    fields: [account.userId],
+    references: [user.id],
+  }),
+}));
+
+export const passkeyRelations = relations(passkey, ({ one }) => ({
+  user: one(user, {
+    fields: [passkey.userId],
+    references: [user.id],
+  }),
+}));
+
+export const organizationRelations = relations(organization, ({ many }) => ({
+  members: many(member),
+  invitations: many(invitation),
+}));
+
+export const memberRelations = relations(member, ({ one }) => ({
+  organization: one(organization, {
+    fields: [member.organizationId],
+    references: [organization.id],
+  }),
+  user: one(user, {
+    fields: [member.userId],
+    references: [user.id],
+  }),
+}));
+
+export const invitationRelations = relations(invitation, ({ one }) => ({
+  organization: one(organization, {
+    fields: [invitation.organizationId],
+    references: [organization.id],
+  }),
+  user: one(user, {
+    fields: [invitation.inviterId],
+    references: [user.id],
+  }),
+}));

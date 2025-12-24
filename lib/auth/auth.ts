@@ -6,6 +6,12 @@ import { passkey } from '@better-auth/passkey';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { createAuthMiddleware } from 'better-auth/api';
+import { organization } from 'better-auth/plugins';
+import { and, eq } from 'drizzle-orm';
+import { getGitHubToken } from '@/lib/github';
+import { getUserOrgMembership } from '@/lib/github/organizations';
+import { syncGitHubMembers } from '@/lib/organization/sync';
+import { ac, billingAdmin, bountyManager, member, owner } from './permissions';
 import { tempo } from './tempo-plugin/tempo-plugin';
 import type { TempoTransactionParams } from './tempo-plugin/types';
 
@@ -30,6 +36,9 @@ export const auth = betterAuth({
     github: {
       clientId: process.env.GITHUB_CLIENT_ID!,
       clientSecret: process.env.GITHUB_CLIENT_SECRET!,
+      // read:org scope required for organization features
+      // Allows reading user's org memberships and org member lists
+      scope: ['read:user', 'user:email', 'read:org'],
     },
   },
 
@@ -70,6 +79,78 @@ export const auth = betterAuth({
       // Default Access Key settings
       accessKeyDefaults: {
         label: 'GRIP Auto-pay',
+      },
+    }),
+
+    // Organization plugin - multi-user organizations with GitHub linking
+    organization({
+      ac,
+      roles: { owner, billingAdmin, bountyManager, member },
+
+      // Only users with GitHub accounts can create orgs
+      // This ensures we can verify ownership of GitHub-linked orgs
+      allowUserToCreateOrganization: async (user): Promise<boolean> => {
+        // Check if user has connected GitHub account
+        // Query database directly since we're server-side
+        const githubAccounts = await db
+          .select()
+          .from(schema.account)
+          .where(and(eq(schema.account.userId, user.id), eq(schema.account.providerId, 'github')))
+          .limit(1);
+        return githubAccounts.length > 0;
+      },
+
+      organizationHooks: {
+        afterCreateOrganization: async ({ organization, member, user }) => {
+          // If GitHub org linked with sync enabled, trigger initial sync
+          // This populates the organization with GitHub members on creation
+          if (organization.githubOrgId && organization.syncMembership) {
+            const token = await getGitHubToken(user.id);
+            if (token) {
+              try {
+                await syncGitHubMembers(organization.id, token);
+              } catch (error) {
+                console.error('Initial org sync failed:', error);
+                // Don't throw - org is created, sync can be retried manually
+              }
+            }
+          }
+        },
+
+        beforeAddMember: async ({ member, user, organization }) => {
+          // If sync enabled, verify user is member of GitHub org
+          // This prevents adding users who aren't in the GitHub org
+          if (organization.syncMembership && organization.githubOrgLogin) {
+            // Need to get an admin's token to check membership
+            // We'll use the current user's token (assumes they have access)
+            const token = await getGitHubToken(user.id);
+            if (!token) {
+              throw new Error('GitHub account required for synced organizations');
+            }
+
+            const membership = await getUserOrgMembership(token, organization.githubOrgLogin);
+            if (!membership) {
+              throw new Error('User is not a member of this GitHub organization');
+            }
+          }
+        },
+      },
+
+      schema: {
+        organization: {
+          additionalFields: {
+            githubOrgId: { type: 'number', required: false },
+            githubOrgLogin: { type: 'string', required: false },
+            syncMembership: { type: 'boolean', defaultValue: false },
+            lastSyncedAt: { type: 'date', required: false },
+          },
+        },
+        member: {
+          additionalFields: {
+            sourceType: { type: 'string', defaultValue: 'manual_invite' },
+            githubOrgRole: { type: 'string', required: false },
+          },
+        },
       },
     }),
   ],
