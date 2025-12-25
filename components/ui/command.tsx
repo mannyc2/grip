@@ -51,7 +51,7 @@ function CommandDialog({
         className={cn('rounded-xl! p-0 overflow-hidden p-0', className)}
         showCloseButton={showCloseButton}
       >
-        {children}
+        <Command>{children}</Command>
       </DialogContent>
     </Dialog>
   );
@@ -67,7 +67,7 @@ function CommandInput({
         <CommandPrimitive.Input
           data-slot="command-input"
           className={cn(
-            'w-full text-xs/relaxed outline-hidden disabled:cursor-not-allowed disabled:opacity-50',
+            'w-full text-xs/relaxed outline-hidden ring-0 focus-visible:ring-0 disabled:cursor-not-allowed disabled:opacity-50',
             className
           )}
           {...props}

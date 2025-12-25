@@ -87,3 +87,63 @@ export async function validateAccessKeyForPayout(params: {
 
   return { valid: true };
 }
+
+// ============================================================================
+// ORG ACCESS KEYS
+// ============================================================================
+
+/**
+ * Get Access Key by ID for org (validates org ownership)
+ */
+export async function getOrgAccessKeyById(id: string, orgId: string) {
+  const keys = await db
+    .select()
+    .from(accessKeys)
+    .where(
+      and(eq(accessKeys.id, id), eq(accessKeys.organizationId, orgId), networkFilter(accessKeys))
+    )
+    .limit(1);
+
+  return keys[0] ?? null;
+}
+
+/**
+ * Validate Access Key for org payout
+ */
+export async function validateOrgAccessKeyForPayout(params: {
+  accessKeyId: string;
+  orgId: string;
+  tokenAddress: string;
+  amount: bigint;
+}): Promise<{ valid: boolean; error?: string }> {
+  const key = await getOrgAccessKeyById(params.accessKeyId, params.orgId);
+
+  if (!key) {
+    return { valid: false, error: 'Access Key not found for this organization' };
+  }
+
+  if (key.status !== 'active') {
+    return { valid: false, error: 'Access Key is not active' };
+  }
+
+  if (key.expiry && BigInt(Math.floor(Date.now() / 1000)) > key.expiry) {
+    return { valid: false, error: 'Access Key has expired' };
+  }
+
+  const limits = key.limits as Record<string, { initial: string; remaining: string }>;
+  const tokenLimit = limits[params.tokenAddress];
+
+  if (!tokenLimit) {
+    return { valid: false, error: `No spending limit set for token ${params.tokenAddress}` };
+  }
+
+  const remaining = BigInt(tokenLimit.remaining);
+  if (remaining < params.amount) {
+    return {
+      valid: false,
+      error: `Insufficient spending limit: need ${params.amount}, have ${remaining}`,
+    };
+  }
+
+  return { valid: true };
+}

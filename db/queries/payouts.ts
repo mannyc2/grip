@@ -2,7 +2,7 @@ import { bounties, db, passkey, payouts, repoSettings, submissions, user } from 
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { getNetworkForInsert, networkFilter } from '../network';
 
-export type PayoutStatus = 'pending' | 'confirmed' | 'failed';
+export type PayoutStatus = 'pending' | 'awaiting_release' | 'confirmed' | 'failed';
 
 export type CreatePayoutInput = {
   submissionId?: string;
@@ -12,8 +12,9 @@ export type CreatePayoutInput = {
   // OPTIONAL for permissionless bounties (bounties without repo settings)
   repoSettingsId?: bigint | string | number | null;
 
-  // Track who's paying (primary funder for bounties)
-  payerUserId: string;
+  // Track who's paying (XOR: exactly one must be set)
+  payerUserId?: string;
+  payerOrganizationId?: string;
 
   // NULLABLE for custodial payments (contributor has no account yet)
   recipientPasskeyId: string | null;
@@ -28,9 +29,20 @@ export type CreatePayoutInput = {
   // Custodial wallet tracking (for payments to contributors without wallets)
   custodialWalletId?: string;
   isCustodial?: boolean;
+
+  // Status (defaults to 'pending', can be 'awaiting_release' for org payments)
+  status?: PayoutStatus;
 };
 
 export async function createPayout(input: CreatePayoutInput) {
+  // Validate XOR: exactly one of payerUserId or payerOrganizationId must be set
+  if (
+    (!input.payerUserId && !input.payerOrganizationId) ||
+    (input.payerUserId && input.payerOrganizationId)
+  ) {
+    throw new Error('Must provide either payerUserId or payerOrganizationId, not both');
+  }
+
   const amountBigInt = typeof input.amount === 'string' ? BigInt(input.amount) : input.amount;
 
   // Convert repoSettingsId to BigInt if provided
@@ -53,7 +65,8 @@ export async function createPayout(input: CreatePayoutInput) {
       bountyId: input.bountyId,
       recipientUserId: input.recipientUserId,
       repoSettingsId, // NULLABLE for permissionless
-      payerUserId: input.payerUserId,
+      payerUserId: input.payerUserId ?? null,
+      payerOrganizationId: input.payerOrganizationId ?? null,
       recipientPasskeyId: input.recipientPasskeyId,
       recipientAddress: input.recipientAddress,
       amount: amountBigInt,
@@ -63,7 +76,7 @@ export async function createPayout(input: CreatePayoutInput) {
       memoContributor: input.memoContributor,
       custodialWalletId: input.custodialWalletId ?? null,
       isCustodial: input.isCustodial ?? false,
-      status: 'pending',
+      status: input.status ?? 'pending',
     })
     .returning();
 
@@ -388,7 +401,8 @@ export async function getUserCompletedBountiesCount(userId: string): Promise<num
  * bountyId and submissionId are null for direct payments.
  */
 export type CreateDirectPaymentInput = {
-  payerUserId: string;
+  payerUserId?: string;
+  payerOrganizationId?: string;
   recipientUserId: string;
   recipientPasskeyId: string | null;
   recipientAddress: string | null;
@@ -400,6 +414,14 @@ export type CreateDirectPaymentInput = {
 };
 
 export async function createDirectPayment(input: CreateDirectPaymentInput) {
+  // Validate XOR: exactly one of payerUserId or payerOrganizationId must be set
+  if (
+    (!input.payerUserId && !input.payerOrganizationId) ||
+    (input.payerUserId && input.payerOrganizationId)
+  ) {
+    throw new Error('Must provide either payerUserId or payerOrganizationId, not both');
+  }
+
   const amountBigInt = typeof input.amount === 'string' ? BigInt(input.amount) : input.amount;
 
   const [payout] = await db
@@ -410,7 +432,8 @@ export async function createDirectPayment(input: CreateDirectPaymentInput) {
       bountyId: null, // No bounty for direct payments
       submissionId: null, // No submission for direct payments
       repoSettingsId: null,
-      payerUserId: input.payerUserId,
+      payerUserId: input.payerUserId ?? null,
+      payerOrganizationId: input.payerOrganizationId ?? null,
       recipientUserId: input.recipientUserId,
       recipientPasskeyId: input.recipientPasskeyId,
       recipientAddress: input.recipientAddress,

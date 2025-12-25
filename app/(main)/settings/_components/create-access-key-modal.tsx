@@ -13,7 +13,7 @@ import { useSignMessage } from 'wagmi';
 
 type AccessKey = {
   id: string;
-  backendWalletAddress: string;
+  backendWalletAddress: string | null;
   limits: Record<string, { initial: string; remaining: string }>;
   status: string;
   createdAt: string | null;

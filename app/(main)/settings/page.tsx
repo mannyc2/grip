@@ -29,7 +29,14 @@ export default async function SettingsPage() {
 
   // Fetch passkey and access key data server-side
   const passkeys = await getPasskeysByUser(session.user.id);
-  const wallet = passkeys.find((p) => p.tempoAddress) ?? null;
+  const walletPasskey = passkeys.find((p) => p.tempoAddress) ?? null;
+  // Convert Date to string for client component
+  const wallet = walletPasskey
+    ? {
+        ...walletPasskey,
+        createdAt: walletPasskey.createdAt?.toISOString() ?? new Date().toISOString(),
+      }
+    : null;
   const accessKeysRaw = await getAccessKeysByUser(session.user.id);
 
   // Type assertion: limits field is JSONB in DB, typed as unknown

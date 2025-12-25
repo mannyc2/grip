@@ -3,27 +3,33 @@
 /**
  * check-env-sync.js
  *
- * Ensures environment variables stay in sync:
- * 1. .env.example contains all vars from .env (local developer env)
- * 2. Code only uses env vars documented in .env.example
+ * Ensures environment variables stay in sync with new multi-env structure:
+ * 1. .env.development (committed) - Development template
+ * 2. .env.production (committed) - Production template
+ * 3. .env.development.local (gitignored) - Local secrets
+ *
+ * Checks:
+ * 1. Code only uses env vars documented in .env.development or .env.production
+ * 2. .env.development.local vars (if exists) are documented in .env.development
  *
  * Why this matters:
  * - New developers know what env vars to set up
  * - No orphaned env var references in code
- * - .env.example stays up to date as single source of truth
+ * - Environment templates stay up to date
  *
  * Trade-offs:
  * - Adds ~500ms to pre-commit (grep for process.env)
  * - Prevents undocumented env var sprawl
- * - Ensures .env.example is always current
+ * - Ensures templates are always current
  */
 
 const fs = require('node:fs');
 const path = require('node:path');
 const { execSync } = require('node:child_process');
 
-const ENV_EXAMPLE = '.env.example';
-const ENV_LOCAL = '.env';
+const ENV_DEVELOPMENT = '.env.development';
+const ENV_PRODUCTION = '.env.production';
+const ENV_LOCAL = '.env.development.local';
 
 // Parse .env file into array of variable names
 // Skips comments and empty lines, extracts only variable names
@@ -82,44 +88,52 @@ function checkEnvSync() {
   let hasErrors = false;
 
   // Parse env files
-  const exampleVars = parseEnvFile(ENV_EXAMPLE);
+  const devVars = parseEnvFile(ENV_DEVELOPMENT);
+  const prodVars = parseEnvFile(ENV_PRODUCTION);
   const localVars = parseEnvFile(ENV_LOCAL);
   const codeVars = findEnvUsageInCode();
 
+  // Combine dev and prod vars (all documented vars)
+  const documentedVars = [...new Set([...devVars, ...prodVars])];
+
   console.log('\n🔍 Checking environment variable sync...\n');
 
-  // CHECK 1: .env.example should contain all vars from .env
-  // This ensures new developers know what vars to set up
+  // CHECK 1: .env.development should contain all vars from .env.development.local
+  // This ensures local overrides are documented
   if (localVars.length > 0) {
-    const missingInExample = localVars.filter((v) => !exampleVars.includes(v));
+    const missingInDev = localVars.filter((v) => !devVars.includes(v));
 
-    if (missingInExample.length > 0) {
+    if (missingInDev.length > 0) {
       hasErrors = true;
-      console.error('❌ CHECK 1 FAILED: .env.example is missing variables from .env\n');
-      console.error('Variables in .env but NOT in .env.example:');
-      for (const v of missingInExample) {
+      console.error(
+        '❌ CHECK 1 FAILED: .env.development is missing variables from .env.development.local\n'
+      );
+      console.error('Variables in .env.development.local but NOT in .env.development:');
+      for (const v of missingInDev) {
         console.error(`  - ${v}`);
       }
-      console.error('\nFix: Add these variables to .env.example with example values:');
-      for (const v of missingInExample) {
-        console.error(`  ${v}=example_value_here`);
+      console.error('\nFix: Add these variables to .env.development with template values:');
+      for (const v of missingInDev) {
+        console.error(`  ${v}="template_value_here"`);
       }
       console.error('');
     } else {
-      console.log('✅ CHECK 1 PASSED: All .env variables are in .env.example');
+      console.log(
+        '✅ CHECK 1 PASSED: All .env.development.local variables are in .env.development'
+      );
     }
   } else {
-    console.log('⚠️  CHECK 1 SKIPPED: No .env file found (okay for new projects)');
+    console.log('⚠️  CHECK 1 SKIPPED: No .env.development.local file found (okay)');
   }
 
-  // CHECK 2: Code should only use env vars documented in .env.example
+  // CHECK 2: Code should only use env vars documented in .env.development or .env.production
   // This prevents orphaned env var references
-  const undocumented = codeVars.filter((v) => !exampleVars.includes(v));
+  const undocumented = codeVars.filter((v) => !documentedVars.includes(v));
 
   if (undocumented.length > 0) {
     hasErrors = true;
     console.error('\n❌ CHECK 2 FAILED: Code uses undocumented environment variables\n');
-    console.error('Variables used in code but NOT in .env.example:');
+    console.error('Variables used in code but NOT in .env.development or .env.production:');
 
     // Find where each var is used (show first 3 occurrences)
     for (const v of undocumented) {
@@ -142,13 +156,15 @@ function checkEnvSync() {
     }
 
     console.error('\nFix options:');
-    console.error('  1. Add these variables to .env.example:');
+    console.error(
+      '  1. Add these variables to .env.development (or .env.production if production-only):'
+    );
     for (const v of undocumented) {
-      console.error(`     ${v}=example_value_here`);
+      console.error(`     ${v}="template_value_here"`);
     }
     console.error('  2. OR remove the code that uses these variables\n');
   } else {
-    console.log('✅ CHECK 2 PASSED: All code env vars are documented in .env.example');
+    console.log('✅ CHECK 2 PASSED: All code env vars are documented');
   }
 
   // Summary
@@ -158,8 +174,8 @@ function checkEnvSync() {
   } else {
     console.error('\n❌ Environment variable sync failed!\n');
     console.error('Environment variables must stay in sync:');
-    console.error('  .env → .env.example (document all local vars)');
-    console.error('  code → .env.example (only use documented vars)\n');
+    console.error('  .env.development.local → .env.development (document all local vars)');
+    console.error('  code → .env.development/.env.production (only use documented vars)\n');
     process.exit(1);
   }
 }
