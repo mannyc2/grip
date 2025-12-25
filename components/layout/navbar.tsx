@@ -250,7 +250,7 @@ export function Navbar() {
                   <DropdownMenuItem
                     render={
                       <Link
-                        href={`/u/${session.user.name}`}
+                        href={`/${session.user.name}`}
                         className="flex items-center gap-2 cursor-pointer"
                       />
                     }
