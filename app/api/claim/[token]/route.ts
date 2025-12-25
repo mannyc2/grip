@@ -2,6 +2,7 @@ import { db } from '@/db';
 import { getNetworkForInsert } from '@/db/network';
 import { getUserWallet } from '@/db/queries/passkeys';
 import { createPayout, updatePayoutStatus } from '@/db/queries/payouts';
+import { markPendingPaymentClaimed } from '@/db/queries/pending-payments';
 import { accessKeys } from '@/db/schema/business';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { buildPayoutTransaction } from '@/lib/tempo';
@@ -95,10 +96,57 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // Execute each payment
     for (const payment of allPending) {
       try {
-        // Get funder's wallet
+        // Check if org payment (no dedicated Access Key - different flow)
+        if (payment.organizationId && !payment.dedicatedAccessKeyId) {
+          // ORG PAYMENT: Mark as awaiting release (team member must sign)
+          console.log('[claim] Org payment detected - creating awaiting_release payout');
+
+          // Create payout record in 'awaiting_release' status
+          const payout = await createPayout({
+            submissionId: payment.submissionId ?? undefined,
+            bountyId: payment.bountyId ?? undefined,
+            recipientUserId: session.user.id,
+            payerUserId: undefined,
+            payerOrganizationId: payment.organizationId,
+            recipientPasskeyId: userWallet.id,
+            recipientAddress: userWallet.tempoAddress,
+            amount: payment.amount,
+            tokenAddress: payment.tokenAddress,
+            status: 'awaiting_release',
+          });
+
+          // Mark pending payment as claimed
+          await markPendingPaymentClaimed({
+            paymentId: payment.id,
+            userId: session.user.id,
+            payoutId: payout.id,
+          });
+
+          console.log(`[claim] Org payment marked awaiting_release: ${payout.id}`);
+
+          results.push({
+            success: true,
+            status: 'awaiting_release',
+            payoutId: payout.id,
+            amount: payment.amount.toString(),
+            tokenAddress: payment.tokenAddress,
+            message: 'Wallet created! Waiting for team member to release payment.',
+          });
+
+          continue; // Skip to next payment
+        }
+
+        // PERSONAL PAYMENT: Auto-release flow
+        if (!payment.funderId) {
+          throw new Error('Invalid pending payment: missing funder');
+        }
         const funderWallet = await getUserWallet(payment.funderId);
         if (!funderWallet?.tempoAddress) {
           throw new Error('Funder wallet not found');
+        }
+
+        if (!payment.dedicatedAccessKeyId) {
+          throw new Error('Personal payment missing dedicated Access Key');
         }
 
         // Get dedicated Access Key
@@ -108,6 +156,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
         if (!dedicatedKey || dedicatedKey.status !== 'active') {
           throw new Error('Payment authorization revoked');
+        }
+
+        if (!dedicatedKey.backendWalletAddress) {
+          throw new Error('Invalid access key: missing backend wallet address');
         }
 
         // Get bounty metadata for on-chain memo (if this is a bounty payment)
@@ -175,16 +227,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
         await updatePayoutStatus(payout.id, 'pending', { txHash });
 
         // Mark pending payment as claimed
-        const { markPendingPaymentClaimed } = await import('@/db/queries/pending-payments');
         await markPendingPaymentClaimed({
           paymentId: payment.id,
           userId: session.user.id,
           payoutId: payout.id,
         });
 
-        // Revoke dedicated Access Key (single-use)
-        const { revokeDedicatedAccessKey } = await import('@/lib/tempo/dedicated-access-keys');
-        await revokeDedicatedAccessKey(payment.dedicatedAccessKeyId);
+        // Revoke dedicated Access Key (single-use) - only for personal payments
+        if (payment.dedicatedAccessKeyId) {
+          const { revokeDedicatedAccessKey } = await import('@/lib/tempo/access-keys');
+          await revokeDedicatedAccessKey(payment.dedicatedAccessKeyId);
+        }
 
         results.push({
           success: true,

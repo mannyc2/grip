@@ -9,7 +9,7 @@ import { CreateAccessKeyModal } from './create-access-key-modal';
 
 type AccessKey = {
   id: string;
-  backendWalletAddress: string;
+  backendWalletAddress: string | null;
   limits: Record<string, { initial: string; remaining: string }>;
   status: string;
   createdAt: string | null;
@@ -203,7 +203,9 @@ function AccessKeyListItem({
             {accessKey.status === 'revoked' && <Badge variant="secondary">Revoked</Badge>}
           </div>
           <p className="caption text-muted-foreground font-mono">
-            {truncateAddress(accessKey.backendWalletAddress)}
+            {accessKey.backendWalletAddress
+              ? truncateAddress(accessKey.backendWalletAddress)
+              : 'Org Access Key'}
           </p>
         </div>
 

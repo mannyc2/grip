@@ -71,6 +71,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Cannot send payment to yourself' }, { status: 400 });
     }
 
+    // Org context detection
+    const isOrgPayment = !!session.session?.activeOrganizationId;
+    const activeOrgId = session.session?.activeOrganizationId;
+
     // 2. Lookup recipient by GitHub username
     const recipient = await getUserByName(recipientUsername);
 
@@ -125,18 +129,33 @@ export async function POST(request: NextRequest) {
       try {
         // Check balance before creating pending payment
         // Prevents bad UX: recipient claim fails on-chain if sender has insufficient balance
-        const senderWallet = await getUserWallet(session.user.id);
-        if (!senderWallet?.tempoAddress) {
-          return NextResponse.json({ error: 'Sender wallet not found' }, { status: 400 });
-        }
+        let balanceCheck: {
+          sufficient: boolean;
+          balance: bigint;
+          totalLiabilities: bigint;
+          newTotal: bigint;
+        };
+        if (isOrgPayment) {
+          const { checkOrgBalance } = await import('@/lib/tempo/balance');
+          balanceCheck = await checkOrgBalance({
+            orgId: activeOrgId!,
+            tokenAddress,
+            newAmount: BigInt(amount),
+          });
+        } else {
+          const senderWallet = await getUserWallet(session.user.id);
+          if (!senderWallet?.tempoAddress) {
+            return NextResponse.json({ error: 'Sender wallet not found' }, { status: 400 });
+          }
 
-        const { checkSufficientBalance } = await import('@/lib/tempo/balance');
-        const balanceCheck = await checkSufficientBalance({
-          funderId: session.user.id,
-          walletAddress: senderWallet.tempoAddress,
-          tokenAddress,
-          newAmount: BigInt(amount),
-        });
+          const { checkSufficientBalance } = await import('@/lib/tempo/balance');
+          balanceCheck = await checkSufficientBalance({
+            userId: session.user.id,
+            walletAddress: senderWallet.tempoAddress,
+            tokenAddress,
+            newAmount: BigInt(amount),
+          });
+        }
 
         if (!balanceCheck.sufficient) {
           // Format amounts for error message (assuming 6 decimals for USDC)
@@ -160,30 +179,40 @@ export async function POST(request: NextRequest) {
           );
         }
 
-        // Create dedicated Access Key
-        const { createDedicatedAccessKey } = await import('@/lib/tempo/dedicated-access-keys');
-        const dedicatedKey = await createDedicatedAccessKey({
-          userId: session.user.id,
-          tokenAddress,
-          amount: BigInt(amount),
-          authorizationSignature: accessKeySignature,
-          authorizationHash: accessKeyAuthHash,
-          chainId: TEMPO_CHAIN_ID,
-        });
-
-        console.log(`[direct-payment] Created dedicated Access Key: ${dedicatedKey.id}`);
+        // Create dedicated Access Key (only for personal payments)
+        // Org payments don't use dedicated keys - team member will sign release manually
+        let dedicatedKeyId: string | undefined;
+        if (!isOrgPayment) {
+          const { createDedicatedAccessKey } = await import('@/lib/tempo/access-keys');
+          const dedicatedKey = await createDedicatedAccessKey({
+            userId: session.user.id,
+            tokenAddress,
+            amount: BigInt(amount),
+            authorizationSignature: accessKeySignature,
+            authorizationHash: accessKeyAuthHash,
+            chainId: TEMPO_CHAIN_ID,
+          });
+          dedicatedKeyId = dedicatedKey.id;
+          console.log(`[direct-payment] Created dedicated Access Key: ${dedicatedKey.id}`);
+        } else {
+          console.log(
+            '[direct-payment] Skipping Access Key creation for org payment (manual release)'
+          );
+        }
 
         // Create pending payment
         const { createPendingPaymentForDirectPayment } = await import(
           '@/db/queries/pending-payments'
         );
         const pendingPayment = await createPendingPaymentForDirectPayment({
-          funderId: session.user.id,
+          funderId: isOrgPayment ? undefined : session.user.id,
+          organizationId: isOrgPayment ? (activeOrgId ?? undefined) : undefined,
+          approvedByUserId: session.user.id,
           recipientGithubUserId: Number(githubUserId),
           recipientGithubUsername: githubUsername,
           amount: BigInt(amount),
           tokenAddress,
-          dedicatedAccessKeyId: dedicatedKey.id,
+          dedicatedAccessKeyId: dedicatedKeyId,
         });
 
         console.log(`[direct-payment] Created pending payment: ${pendingPayment.id}`);
@@ -236,7 +265,8 @@ export async function POST(request: NextRequest) {
 
     // 5. Create payout record
     const payout = await createDirectPayment({
-      payerUserId: session.user.id,
+      payerUserId: isOrgPayment ? undefined : session.user.id,
+      payerOrganizationId: isOrgPayment ? (activeOrgId ?? undefined) : undefined,
       recipientUserId,
       recipientPasskeyId,
       recipientAddress,
@@ -259,24 +289,39 @@ export async function POST(request: NextRequest) {
     if (useAccessKey) {
       const network = getNetworkForInsert();
 
-      const activeKey = await db.query.accessKeys.findFirst({
-        where: and(
-          eq(accessKeys.userId, session.user.id),
-          eq(accessKeys.network, network),
-          eq(accessKeys.status, 'active')
-        ),
-      });
+      // Query for active Access Key (org or personal)
+      let activeKey: typeof accessKeys.$inferSelect | null | undefined;
+      if (isOrgPayment) {
+        const { getOrgAccessKey } = await import('@/db/queries/organizations');
+        activeKey = await getOrgAccessKey(activeOrgId!, session.user.id);
+      } else {
+        activeKey = await db.query.accessKeys.findFirst({
+          where: and(
+            eq(accessKeys.userId, session.user.id),
+            eq(accessKeys.network, network),
+            eq(accessKeys.status, 'active')
+          ),
+        });
+      }
 
       if (activeKey) {
         try {
-          const senderWallet = await getUserWallet(session.user.id);
-          if (!senderWallet?.tempoAddress) {
-            throw new Error('Sender wallet not found');
+          // Get sender's wallet address (org or personal)
+          let senderWalletAddress: `0x${string}`;
+          if (isOrgPayment) {
+            const { getOrgWalletAddress } = await import('@/db/queries/organizations');
+            senderWalletAddress = await getOrgWalletAddress(activeOrgId!);
+          } else {
+            const senderWallet = await getUserWallet(session.user.id);
+            if (!senderWallet?.tempoAddress) {
+              throw new Error('Sender wallet not found');
+            }
+            senderWalletAddress = senderWallet.tempoAddress as `0x${string}`;
           }
 
           const nonce = BigInt(
             await tempoClient.getTransactionCount({
-              address: senderWallet.tempoAddress as `0x${string}`,
+              address: senderWalletAddress,
               blockTag: 'pending',
             })
           );
@@ -288,7 +333,7 @@ export async function POST(request: NextRequest) {
               value: txParams.value,
               nonce: BigInt(nonce),
             },
-            funderAddress: senderWallet.tempoAddress as `0x${string}`,
+            funderAddress: senderWalletAddress,
             network: network as 'testnet' | 'mainnet',
           });
 

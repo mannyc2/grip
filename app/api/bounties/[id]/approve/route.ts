@@ -70,12 +70,48 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const { bounty } = result;
 
-    // Permission check: primary funder controls approvals
-    if (bounty.primaryFunderId !== session.user.id) {
+    // Org context detection
+    const isOrgPayment = !!bounty.organizationId;
+    const activeOrgId = session.session?.activeOrganizationId;
+
+    // Validate context matches
+    if (isOrgPayment && !activeOrgId) {
       return NextResponse.json(
-        { error: 'Only the primary funder can approve submissions' },
+        { error: 'This is an organization bounty. Switch to the organization context.' },
         { status: 403 }
       );
+    }
+
+    if (!isOrgPayment && activeOrgId) {
+      return NextResponse.json(
+        { error: 'This is a personal bounty. Switch to personal mode.' },
+        { status: 403 }
+      );
+    }
+
+    if (isOrgPayment && activeOrgId !== bounty.organizationId) {
+      return NextResponse.json(
+        { error: 'This bounty belongs to a different organization.' },
+        { status: 403 }
+      );
+    }
+
+    // Permission check: org members or primary funder can approve
+    if (isOrgPayment) {
+      const { isOrgMember } = await import('@/db/queries/organizations');
+      if (!(await isOrgMember(bounty.organizationId!, session.user.id))) {
+        return NextResponse.json(
+          { error: 'Only organization members can approve org bounties' },
+          { status: 403 }
+        );
+      }
+    } else {
+      if (bounty.primaryFunderId !== session.user.id) {
+        return NextResponse.json(
+          { error: 'Only the primary funder can approve submissions' },
+          { status: 403 }
+        );
+      }
     }
 
     // Submission resolution logic: Determine which submission to approve
@@ -150,7 +186,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
         submissionId: submissionToApprove.id,
         bountyId: bounty.id,
         recipientUserId: submissionToApprove.userId,
-        payerUserId: bounty.primaryFunderId,
+        payerUserId: isOrgPayment ? undefined : (bounty.primaryFunderId ?? undefined),
+        payerOrganizationId: isOrgPayment ? (bounty.organizationId ?? undefined) : undefined,
         recipientPasskeyId: contributorWallet.id,
         recipientAddress: contributorWallet.tempoAddress,
         amount: bounty.totalFunded,
@@ -180,29 +217,42 @@ export async function POST(request: NextRequest, context: RouteContext) {
       if (useAccessKey) {
         const network = getNetworkForInsert();
 
-        // Query for active Access Key
-        const activeKey = await db.query.accessKeys.findFirst({
-          where: and(
-            eq(accessKeys.userId, session.user.id),
-            eq(accessKeys.network, network),
-            eq(accessKeys.status, 'active')
-          ),
-        });
+        // Query for active Access Key (org or personal)
+        let activeKey: typeof accessKeys.$inferSelect | null | undefined;
+        if (isOrgPayment) {
+          const { getOrgAccessKey } = await import('@/db/queries/organizations');
+          activeKey = await getOrgAccessKey(bounty.organizationId!, session.user.id);
+        } else {
+          activeKey = await db.query.accessKeys.findFirst({
+            where: and(
+              eq(accessKeys.userId, session.user.id),
+              eq(accessKeys.network, network),
+              eq(accessKeys.status, 'active')
+            ),
+          });
+        }
 
         if (activeKey) {
           try {
             console.log('[approve] Found active Access Key, attempting auto-sign...');
 
-            // Get funder's wallet address
-            const funderWallet = await getUserWallet(session.user.id);
-            if (!funderWallet?.tempoAddress) {
-              throw new Error('Funder wallet not found');
+            // Get funder's wallet address (org or personal)
+            let funderWalletAddress: `0x${string}`;
+            if (isOrgPayment) {
+              const { getOrgWalletAddress } = await import('@/db/queries/organizations');
+              funderWalletAddress = await getOrgWalletAddress(bounty.organizationId!);
+            } else {
+              const funderWallet = await getUserWallet(session.user.id);
+              if (!funderWallet?.tempoAddress) {
+                throw new Error('Funder wallet not found');
+              }
+              funderWalletAddress = funderWallet.tempoAddress as `0x${string}`;
             }
 
             // Get nonce for funder's account
             const nonce = BigInt(
               await tempoClient.getTransactionCount({
-                address: funderWallet.tempoAddress as `0x${string}`,
+                address: funderWalletAddress,
                 blockTag: 'pending',
               })
             );
@@ -215,7 +265,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
                 value: txParams.value,
                 nonce,
               },
-              funderAddress: funderWallet.tempoAddress as `0x${string}`,
+              funderAddress: funderWalletAddress,
               network: network as 'testnet' | 'mainnet',
             });
 
@@ -350,18 +400,33 @@ export async function POST(request: NextRequest, context: RouteContext) {
     try {
       // Check balance before creating pending payment
       // Prevents bad UX: contributor claim fails on-chain if funder has insufficient balance
-      const funderWallet = await getUserWallet(session.user.id);
-      if (!funderWallet?.tempoAddress) {
-        return NextResponse.json({ error: 'Funder wallet not found' }, { status: 400 });
-      }
+      let balanceCheck: {
+        sufficient: boolean;
+        balance: bigint;
+        totalLiabilities: bigint;
+        newTotal: bigint;
+      };
+      if (isOrgPayment) {
+        const { checkOrgBalance } = await import('@/lib/tempo/balance');
+        balanceCheck = await checkOrgBalance({
+          orgId: bounty.organizationId!,
+          tokenAddress: bounty.tokenAddress,
+          newAmount: bounty.totalFunded,
+        });
+      } else {
+        const funderWallet = await getUserWallet(session.user.id);
+        if (!funderWallet?.tempoAddress) {
+          return NextResponse.json({ error: 'Funder wallet not found' }, { status: 400 });
+        }
 
-      const { checkSufficientBalance } = await import('@/lib/tempo/balance');
-      const balanceCheck = await checkSufficientBalance({
-        funderId: session.user.id,
-        walletAddress: funderWallet.tempoAddress,
-        tokenAddress: bounty.tokenAddress,
-        newAmount: bounty.totalFunded,
-      });
+        const { checkSufficientBalance } = await import('@/lib/tempo/balance');
+        balanceCheck = await checkSufficientBalance({
+          userId: session.user.id,
+          walletAddress: funderWallet.tempoAddress,
+          tokenAddress: bounty.tokenAddress,
+          newAmount: bounty.totalFunded,
+        });
+      }
 
       if (!balanceCheck.sufficient) {
         // Format amounts for error message (assuming 6 decimals for USDC)
@@ -385,30 +450,38 @@ export async function POST(request: NextRequest, context: RouteContext) {
         );
       }
 
-      // Create dedicated Access Key
-      const { createDedicatedAccessKey } = await import('@/lib/tempo/dedicated-access-keys');
-      const dedicatedKey = await createDedicatedAccessKey({
-        userId: session.user.id,
-        tokenAddress: bounty.tokenAddress,
-        amount: bounty.totalFunded,
-        authorizationSignature: accessKeySignature,
-        authorizationHash: accessKeyAuthHash,
-        chainId: TEMPO_CHAIN_ID,
-      });
-
-      console.log(`[approve] Created dedicated Access Key: ${dedicatedKey.id}`);
+      // Create dedicated Access Key (only for personal payments)
+      // Org payments don't use dedicated keys - team member will sign release manually
+      let dedicatedKeyId: string | undefined;
+      if (!isOrgPayment) {
+        const { createDedicatedAccessKey } = await import('@/lib/tempo/access-keys');
+        const dedicatedKey = await createDedicatedAccessKey({
+          userId: session.user.id,
+          tokenAddress: bounty.tokenAddress,
+          amount: bounty.totalFunded,
+          authorizationSignature: accessKeySignature,
+          authorizationHash: accessKeyAuthHash,
+          chainId: TEMPO_CHAIN_ID,
+        });
+        dedicatedKeyId = dedicatedKey.id;
+        console.log(`[approve] Created dedicated Access Key: ${dedicatedKey.id}`);
+      } else {
+        console.log('[approve] Skipping Access Key creation for org payment (manual release)');
+      }
 
       // Create pending payment
       const { createPendingPayment } = await import('@/db/queries/pending-payments');
       const pendingPayment = await createPendingPayment({
         bountyId: bounty.id,
         submissionId: submissionToApprove.id,
-        funderId: session.user.id,
+        funderId: isOrgPayment ? undefined : session.user.id,
+        organizationId: isOrgPayment ? (bounty.organizationId ?? undefined) : undefined,
+        approvedByUserId: session.user.id,
         recipientGithubUserId: Number(githubUserId),
         recipientGithubUsername: githubUsername,
         amount: bounty.totalFunded,
         tokenAddress: bounty.tokenAddress,
-        dedicatedAccessKeyId: dedicatedKey.id,
+        dedicatedAccessKeyId: dedicatedKeyId,
       });
 
       console.log(`[approve] Created pending payment: ${pendingPayment.id}`);

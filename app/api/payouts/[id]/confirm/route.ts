@@ -54,18 +54,39 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const { payout, bounty } = payoutData;
 
     // Check user has permission to confirm this payout
-    // Primary funder controls approvals and payouts
-    const canApprove = bounty.primaryFunderId === session.user.id;
+    // Support both personal and org payments
+    let canConfirm = false;
 
-    if (!canApprove) {
+    if (payout.payerOrganizationId) {
+      // Org payment: Validate Access Key (consistent with /release endpoint)
+      const { validateOrgSpending } = await import('@/db/queries/organizations');
+      const validation = await validateOrgSpending({
+        orgId: payout.payerOrganizationId,
+        teamMemberUserId: session.user.id,
+        tokenAddress: payout.tokenAddress,
+        amount: payout.amount,
+      });
+      canConfirm = validation.valid;
+    } else {
+      // Personal payment: Check if user is the funder
+      canConfirm = bounty.primaryFunderId === session.user.id;
+    }
+
+    if (!canConfirm) {
       return NextResponse.json(
         { error: 'You do not have permission to confirm payouts for this bounty' },
         { status: 403 }
       );
     }
 
-    // Check payout is in pending status
-    if (payout.status !== 'pending') {
+    // Check payout status
+    // Org payments: allow 'awaiting_release' (first confirm) or 'pending' (retries)
+    // Personal payments: allow 'pending' only
+    const allowedStatuses = payout.payerOrganizationId
+      ? ['awaiting_release', 'pending']
+      : ['pending'];
+
+    if (!payout.status || !allowedStatuses.includes(payout.status)) {
       return NextResponse.json(
         { error: `Cannot confirm payout in ${payout.status} status` },
         { status: 400 }
@@ -187,10 +208,20 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     const { payout, bounty } = payoutData;
 
     // Check user has permission to view this payout
-    // Primary funder or recipient can view
-    const canApprove = bounty.primaryFunderId === session.user.id;
+    // Support both personal and org payments
+    let canView = false;
     const isRecipient = payout.recipientUserId === session.user.id;
-    if (!canApprove && !isRecipient) {
+
+    if (payout.payerOrganizationId) {
+      // Org payment: Check if user is org member
+      const { isOrgMember } = await import('@/db/queries/organizations');
+      canView = await isOrgMember(payout.payerOrganizationId, session.user.id);
+    } else {
+      // Personal payment: Check if user is the funder
+      canView = bounty.primaryFunderId === session.user.id;
+    }
+
+    if (!canView && !isRecipient) {
       return NextResponse.json(
         { error: 'You do not have permission to view this payout' },
         { status: 403 }

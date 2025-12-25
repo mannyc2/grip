@@ -16,7 +16,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { passkey, user } from './auth';
+import { organization, passkey, user } from './auth';
 import type { AccessKeyLimits, ActivityMetadata, GithubLabel, NotificationMetadata } from './types';
 
 /**
@@ -101,7 +101,7 @@ export const submissionStatuses = [
 ] as const;
 export type SubmissionStatus = (typeof submissionStatuses)[number];
 
-export const payoutStatuses = ['pending', 'confirmed', 'failed'] as const;
+export const payoutStatuses = ['pending', 'awaiting_release', 'confirmed', 'failed'] as const;
 export type PayoutStatus = (typeof payoutStatuses)[number];
 
 export const paymentTypes = ['bounty', 'direct'] as const;
@@ -246,7 +246,12 @@ export const bounties = pgTable(
     // Funding (pooled promise model)
     totalFunded: u256('total_funded').notNull().default(sql`0`),
     tokenAddress: varchar('token_address', { length: 42 }).notNull(),
+
+    // Primary funder (XOR: either user OR organization)
     primaryFunderId: text('primary_funder_id').references(() => user.id),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'set null',
+    }),
 
     // Bounty lifecycle
     status: varchar('status', { length: 20, enum: bountyStatuses }).notNull().default('open'),
@@ -274,7 +279,12 @@ export const bounties = pgTable(
     ),
     idxBountiesPrimaryFunder: index('idx_bounties_primary_funder').on(table.primaryFunderId),
     idxBountiesRepoSettings: index('idx_bounties_repo_settings').on(table.repoSettingsId),
+    idxBountiesOrg: index('idx_bounties_org').on(table.organizationId, table.network),
     uniqueBountyIssue: unique('idx_bounties_unique_issue').on(table.network, table.githubIssueId),
+    chkBountiesFunder: sql`CHECK (
+      (${table.primaryFunderId} IS NOT NULL AND ${table.organizationId} IS NULL) OR
+      (${table.primaryFunderId} IS NULL AND ${table.organizationId} IS NOT NULL)
+    )`,
   })
 );
 
@@ -305,9 +315,12 @@ export const bountyFunders = pgTable(
     bountyId: uuid('bounty_id')
       .notNull()
       .references(() => bounties.id, { onDelete: 'cascade' }),
-    funderId: text('funder_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+
+    // Funder (XOR: either user OR organization)
+    funderId: text('funder_id').references(() => user.id, { onDelete: 'cascade' }),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'cascade',
+    }),
 
     // Promised amount (NOT deposited — funds stay in funder's wallet)
     amount: u256('amount').notNull(),
@@ -326,7 +339,12 @@ export const bountyFunders = pgTable(
     }),
     idxBountyFundersBounty: index('idx_bounty_funders_bounty').on(table.bountyId),
     idxBountyFundersFunder: index('idx_bounty_funders_funder').on(table.funderId),
+    idxBountyFundersOrg: index('idx_bounty_funders_org').on(table.organizationId, table.network),
     idxBountyFundersNetwork: index('idx_bounty_funders_network').on(table.network),
+    chkBountyFundersFunder: sql`CHECK (
+      (${table.funderId} IS NOT NULL AND ${table.organizationId} IS NULL) OR
+      (${table.funderId} IS NULL AND ${table.organizationId} IS NOT NULL)
+    )`,
   })
 );
 
@@ -436,9 +454,8 @@ export const payouts = pgTable(
     repoSettingsId: i64('repo_settings_id').references(() => repoSettings.githubRepoId),
 
     // Parties involved
-    payerUserId: text('payer_user_id')
-      .notNull()
-      .references(() => user.id),
+    payerUserId: text('payer_user_id').references(() => user.id),
+    payerOrganizationId: text('payer_organization_id').references(() => organization.id),
     recipientUserId: text('recipient_user_id')
       .notNull()
       .references(() => user.id),
@@ -501,6 +518,7 @@ export const payouts = pgTable(
       table.recipientUserId
     ),
     idxPayoutsSender: index('idx_payouts_sender').on(table.network, table.payerUserId),
+    idxPayoutsPayerOrg: index('idx_payouts_payer_org').on(table.payerOrganizationId, table.network),
     // CHECK constraints for payment type discriminator unions
     chkPayoutsTypeShape: sql`CHECK ((${table.paymentType} = 'bounty' AND ${table.bountyId} IS NOT NULL AND ${table.submissionId} IS NOT NULL) OR (${table.paymentType} = 'direct' AND ${table.bountyId} IS NULL AND ${table.submissionId} IS NULL))`,
     chkPayoutsCustodialShape: sql`CHECK ((${table.isCustodial} = true AND ${table.custodialWalletId} IS NOT NULL) OR (${table.isCustodial} = false AND ${table.custodialWalletId} IS NULL))`,
@@ -521,11 +539,18 @@ export const payouts = pgTable(
  *
  * Status values:
  * - pending: Awaiting claim by contributor
+ * - awaiting_release: Contributor claimed, waiting for team member to sign release (org payments only)
  * - claimed: Contributor claimed and payment executed
  * - expired: Claim period expired (1 year)
  * - cancelled: Funder cancelled or insufficient funds
  */
-export const pendingPaymentStatuses = ['pending', 'claimed', 'expired', 'cancelled'] as const;
+export const pendingPaymentStatuses = [
+  'pending',
+  'awaiting_release',
+  'claimed',
+  'expired',
+  'cancelled',
+] as const;
 export type PendingPaymentStatus = (typeof pendingPaymentStatuses)[number];
 
 export const pendingPayments = pgTable(
@@ -541,10 +566,11 @@ export const pendingPayments = pgTable(
     bountyId: uuid('bounty_id').references(() => bounties.id, { onDelete: 'cascade' }),
     submissionId: uuid('submission_id').references(() => submissions.id, { onDelete: 'cascade' }),
 
-    // Parties
-    funderId: text('funder_id')
-      .notNull()
-      .references(() => user.id),
+    // Parties (funder: XOR user OR organization)
+    funderId: text('funder_id').references(() => user.id),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'cascade',
+    }),
     recipientGithubUserId: i64('recipient_github_user_id').notNull(),
     recipientGithubUsername: varchar('recipient_github_username', { length: 39 }).notNull(),
 
@@ -552,10 +578,13 @@ export const pendingPayments = pgTable(
     amount: u256('amount').notNull(),
     tokenAddress: varchar('token_address', { length: 42 }).notNull(),
 
-    // Dedicated Access Key for this payment only
-    dedicatedAccessKeyId: uuid('dedicated_access_key_id')
-      .notNull()
-      .references(() => accessKeys.id),
+    // Dedicated Access Key for this payment only (NULL for org payments)
+    dedicatedAccessKeyId: uuid('dedicated_access_key_id').references(() => accessKeys.id),
+
+    // Track which team member approved (for org payments awaiting release)
+    approvedByUserId: text('approved_by_user_id').references(() => user.id, {
+      onDelete: 'set null',
+    }),
 
     // Claim mechanism
     claimToken: varchar('claim_token', { length: 64 }).notNull().unique(),
@@ -590,10 +619,19 @@ export const pendingPayments = pgTable(
       table.status,
       table.network
     ),
+    idxPendingPaymentsOrg: index('idx_pending_payments_org').on(
+      table.organizationId,
+      table.network,
+      table.status
+    ),
     idxPendingPaymentsClaimToken: index('idx_pending_payments_claim_token').on(table.claimToken),
     // CHECK constraint: either both bountyId/submissionId are set (bounty payment)
     // or both are NULL (direct payment) - no mixing allowed
     chkPendingPaymentsContext: sql`CHECK ((${table.bountyId} IS NOT NULL AND ${table.submissionId} IS NOT NULL) OR (${table.bountyId} IS NULL AND ${table.submissionId} IS NULL))`,
+    chkPendingPaymentsFunder: sql`CHECK (
+      (${table.funderId} IS NOT NULL AND ${table.organizationId} IS NULL) OR
+      (${table.funderId} IS NULL AND ${table.organizationId} IS NOT NULL)
+    )`,
   })
 );
 
@@ -707,13 +745,25 @@ export const accessKeys = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     network: varchar('network', { length: 10, enum: tempoNetworks }).notNull(),
-    userId: text('user_id')
-      .notNull()
-      .references(() => user.id, { onDelete: 'cascade' }),
+
+    // Owner (XOR: either user OR organization)
+    userId: text('user_id').references(() => user.id, { onDelete: 'cascade' }),
+    organizationId: text('organization_id').references(() => organization.id, {
+      onDelete: 'cascade',
+    }),
 
     // Turnkey backend wallet address (identifier, not private key!)
     // This is the keyId in KeyAuthorization
-    backendWalletAddress: varchar('backend_wallet_address', { length: 42 }).notNull(),
+    // For personal access keys: Turnkey backend wallet
+    // For org access keys: NULL (team member signs directly)
+    backendWalletAddress: varchar('backend_wallet_address', { length: 42 }),
+
+    // Team member authorized to sign (only for org access keys)
+    // For personal access keys: NULL (backend signs via Turnkey)
+    // For org access keys: Team member's passkey ID
+    authorizedUserPasskeyId: text('authorized_user_passkey_id').references(() => passkey.id, {
+      onDelete: 'cascade',
+    }),
 
     // Authorization parameters
     keyType: accessKeyTypeEnum('key_type').notNull().default('secp256k1'),
@@ -757,9 +807,17 @@ export const accessKeys = pgTable(
       table.network
     ),
     idxAccessKeysUser: index('idx_access_keys_user').on(table.userId, table.network),
+    idxAccessKeysOrg: index('idx_access_keys_org').on(table.organizationId, table.network),
+    idxAccessKeysAuthorizedUser: index('idx_access_keys_authorized_user').on(
+      table.authorizedUserPasskeyId
+    ),
     idxAccessKeysStatus: index('idx_access_keys_status').on(table.status),
     idxAccessKeysBackendWallet: index('idx_access_keys_backend_wallet').on(
       table.backendWalletAddress
     ),
+    chkAccessKeysOwner: sql`CHECK (
+      (${table.userId} IS NOT NULL AND ${table.organizationId} IS NULL) OR
+      (${table.userId} IS NULL AND ${table.organizationId} IS NOT NULL)
+    )`,
   })
 );

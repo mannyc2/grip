@@ -13,19 +13,30 @@ import { getCurrentNetwork, getNetworkForInsert, networkFilter } from '../networ
  * 3. Generate claim token and set 1-year expiration
  * 4. When contributor signs up, they use claim token to batch-claim all pending payments
  *
+ * Payment types:
+ * - Personal: Has funderId + dedicatedAccessKeyId (auto-release via backend)
+ * - Organization: Has organizationId, no dedicatedAccessKeyId (manual release by team member)
+ *
  * @param params - Payment details
  * @returns Created pending payment record
  */
 export async function createPendingPayment(params: {
   bountyId: string;
   submissionId: string;
-  funderId: string;
+  funderId?: string;
+  organizationId?: string;
+  approvedByUserId: string;
   recipientGithubUserId: number;
   recipientGithubUsername: string;
   amount: bigint;
   tokenAddress: string;
-  dedicatedAccessKeyId: string;
+  dedicatedAccessKeyId?: string;
 }) {
+  // Validate XOR: exactly one of funderId or organizationId must be set
+  if ((!params.funderId && !params.organizationId) || (params.funderId && params.organizationId)) {
+    throw new Error('Must provide either funderId or organizationId, not both');
+  }
+
   const claimToken = crypto.randomBytes(32).toString('hex');
   const claimExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year
 
@@ -35,12 +46,14 @@ export async function createPendingPayment(params: {
       network: getNetworkForInsert(),
       bountyId: params.bountyId,
       submissionId: params.submissionId,
-      funderId: params.funderId,
+      funderId: params.funderId ?? null,
+      organizationId: params.organizationId ?? null,
+      approvedByUserId: params.approvedByUserId,
       recipientGithubUserId: BigInt(params.recipientGithubUserId),
       recipientGithubUsername: params.recipientGithubUsername,
       amount: params.amount,
       tokenAddress: params.tokenAddress,
-      dedicatedAccessKeyId: params.dedicatedAccessKeyId,
+      dedicatedAccessKeyId: params.dedicatedAccessKeyId ?? null,
       claimToken,
       claimExpiresAt: claimExpiresAt.toISOString(),
       status: 'pending',
@@ -58,17 +71,28 @@ export async function createPendingPayment(params: {
  * Chosen approach: Single table with nullable refs + CHECK constraint (both set OR both NULL)
  * Trade-off: Simpler schema, easier batch claiming across payment types
  *
+ * Payment types:
+ * - Personal: Has funderId + dedicatedAccessKeyId (auto-release via backend)
+ * - Organization: Has organizationId, no dedicatedAccessKeyId (manual release by team member)
+ *
  * @param params - Payment details
  * @returns Created pending payment record
  */
 export async function createPendingPaymentForDirectPayment(params: {
-  funderId: string;
+  funderId?: string;
+  organizationId?: string;
+  approvedByUserId: string;
   recipientGithubUserId: number;
   recipientGithubUsername: string;
   amount: bigint;
   tokenAddress: string;
-  dedicatedAccessKeyId: string;
+  dedicatedAccessKeyId?: string;
 }) {
+  // Validate XOR: exactly one of funderId or organizationId must be set
+  if ((!params.funderId && !params.organizationId) || (params.funderId && params.organizationId)) {
+    throw new Error('Must provide either funderId or organizationId, not both');
+  }
+
   const claimToken = crypto.randomBytes(32).toString('hex');
   const claimExpiresAt = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000); // 1 year
 
@@ -78,12 +102,14 @@ export async function createPendingPaymentForDirectPayment(params: {
       network: getNetworkForInsert(),
       bountyId: null, // Direct payment - no bounty context
       submissionId: null,
-      funderId: params.funderId,
+      funderId: params.funderId ?? null,
+      organizationId: params.organizationId ?? null,
+      approvedByUserId: params.approvedByUserId,
       recipientGithubUserId: BigInt(params.recipientGithubUserId),
       recipientGithubUsername: params.recipientGithubUsername,
       amount: params.amount,
       tokenAddress: params.tokenAddress,
-      dedicatedAccessKeyId: params.dedicatedAccessKeyId,
+      dedicatedAccessKeyId: params.dedicatedAccessKeyId ?? null,
       claimToken,
       claimExpiresAt: claimExpiresAt.toISOString(),
       status: 'pending',
@@ -272,8 +298,11 @@ export async function cancelPendingPayment(paymentId: string, funderId: string) 
   }
 
   // 2. Revoke dedicated Access Key (idempotent - safe to call even if already revoked)
-  const { revokeDedicatedAccessKey } = await import('@/lib/tempo/dedicated-access-keys');
-  await revokeDedicatedAccessKey(payment.dedicatedAccessKeyId);
+  // Only for personal payments (org payments don't have dedicated keys)
+  if (payment.dedicatedAccessKeyId) {
+    const { revokeDedicatedAccessKey } = await import('@/lib/tempo/access-keys');
+    await revokeDedicatedAccessKey(payment.dedicatedAccessKeyId);
+  }
 
   // 3. Update payment status to cancelled
   await db
