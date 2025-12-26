@@ -1,14 +1,11 @@
-import { getBountyDataByGitHubId, getUserByName } from '@/db/queries/users';
-import {
-  getOrgByGithubLogin,
-  getOrgBountyData,
-  getOrgMembersWithUsers,
-} from '@/db/queries/organizations';
+import { getBountyDataByGitHubId, getUserByName, getUserOrganizations } from '@/db/queries/users';
+import { getOrgBySlug, getOrgBountyData, getOrgMembersWithUsers } from '@/db/queries/organizations';
 import { getSession } from '@/lib/auth/auth-server';
 import {
   fetchGitHubUser,
   fetchGitHubUserActivity,
   fetchGitHubOrgRepositories,
+  fetchGitHubUserRepositories,
 } from '@/lib/github/api';
 import { getOrganization } from '@/lib/github/organizations';
 import { notFound } from 'next/navigation';
@@ -36,12 +33,14 @@ const RESERVED_ROUTES = new Set([
  * Unified owner profile page - handles both GitHub users and organizations
  *
  * PERMISSIONLESS: Works for ANY GitHub user or org, whether they've signed up or not.
- * Fetches from GitHub API first, then overlays GRIP data if available.
+ * Fetches BountyLane entities first (DB), then falls back to GitHub-only profiles.
  *
- * Owner type detection:
- * 1. Try GitHub user first (most common)
- * 2. Try GitHub organization if user not found
- * 3. Return 404 if neither exists
+ * Resolution order:
+ * 1. BountyLane org by slug
+ * 2. BountyLane user by username
+ * 3. GitHub organization
+ * 4. GitHub user
+ * 5. 404
  */
 export default async function OwnerPage({ params }: OwnerPageProps) {
   const { owner } = await params;
@@ -52,16 +51,65 @@ export default async function OwnerPage({ params }: OwnerPageProps) {
     notFound();
   }
 
-  // Try user first (most common case)
+  // 1. Try BountyLane org first (DB lookup by slug)
+  const gripOrg = await getOrgBySlug(owner);
+  if (gripOrg) {
+    // Fetch BountyLane org data in parallel
+    const [github, repos, bountyData, members] = await Promise.all([
+      gripOrg.githubOrgLogin ? getOrganization(gripOrg.githubOrgLogin) : null,
+      gripOrg.githubOrgLogin ? fetchGitHubOrgRepositories(gripOrg.githubOrgLogin) : [],
+      getOrgBountyData(gripOrg.id),
+      getOrgMembersWithUsers(gripOrg.id),
+    ]);
+
+    const isLoggedIn = !!session?.user;
+
+    // If org has no GitHub link, create placeholder
+    const githubOrg = github ?? {
+      id: 0,
+      login: gripOrg.slug,
+      avatar_url: gripOrg.logo ?? '',
+      description: null,
+      name: gripOrg.name,
+      blog: null,
+      location: null,
+      email: null,
+      public_repos: 0,
+      public_gists: 0,
+      followers: 0,
+      created_at: gripOrg.createdAt.toISOString(),
+      updated_at: gripOrg.createdAt.toISOString(),
+      html_url: `https://github.com/${gripOrg.githubOrgLogin ?? gripOrg.slug}`,
+    };
+
+    return (
+      <OrgProfile
+        github={githubOrg}
+        repos={repos}
+        gripOrg={gripOrg}
+        bountyData={bountyData}
+        members={members}
+        isLoggedIn={isLoggedIn}
+      />
+    );
+  }
+
+  // 2. Try BountyLane user (with GitHub data)
   const [githubUser, githubActivity] = await Promise.all([
     fetchGitHubUser(owner),
     fetchGitHubUserActivity(owner),
   ]);
 
   if (githubUser) {
-    // It's a user - render user profile
     const bountyLaneUser = await getUserByName(owner);
     const bountyData = await getBountyDataByGitHubId(BigInt(githubUser.id));
+
+    // Get org memberships only if user is signed up
+    const organizations = bountyLaneUser ? await getUserOrganizations(bountyLaneUser.id) : [];
+
+    // Fetch repos for GitHub-only users
+    const repos = !bountyLaneUser ? await fetchGitHubUserRepositories(owner) : [];
+
     const isOwnProfile = session?.user?.name === owner;
     const isLoggedIn = !!session?.user;
 
@@ -71,35 +119,27 @@ export default async function OwnerPage({ params }: OwnerPageProps) {
         githubActivity={githubActivity}
         bountyLaneUser={bountyLaneUser}
         bountyData={bountyData}
+        organizations={organizations}
+        repos={repos}
         isOwnProfile={isOwnProfile}
         isLoggedIn={isLoggedIn}
       />
     );
   }
 
-  // Try organization
+  // 3. Try GitHub org (permissionless)
   const githubOrg = await getOrganization(owner);
-
   if (githubOrg) {
-    // It's an organization - render org profile
-    const [gripOrg, repos] = await Promise.all([
-      getOrgByGithubLogin(owner),
-      fetchGitHubOrgRepositories(owner),
-    ]);
-
-    // Get bounty data only if org is linked to GRIP
-    const orgBountyData = gripOrg ? await getOrgBountyData(gripOrg.id) : null;
-    const orgMembers = gripOrg ? await getOrgMembersWithUsers(gripOrg.id) : null;
-
+    const repos = await fetchGitHubOrgRepositories(owner);
     const isLoggedIn = !!session?.user;
 
     return (
       <OrgProfile
         github={githubOrg}
         repos={repos}
-        gripOrg={gripOrg ?? null}
-        bountyData={orgBountyData}
-        members={orgMembers}
+        gripOrg={null}
+        bountyData={null}
+        members={null}
         isLoggedIn={isLoggedIn}
       />
     );

@@ -209,6 +209,27 @@ export async function getOrgByGithubLogin(githubLogin: string) {
 }
 
 /**
+ * Get GRIP organization by slug
+ *
+ * Used for route resolution at /:slug
+ * Returns null if org doesn't exist with this slug
+ */
+export async function getOrgBySlug(slug: string) {
+  const { organization } = await import('@/db/schema/auth');
+
+  return db.query.organization.findFirst({
+    where: eq(organization.slug, slug),
+    with: {
+      members: {
+        with: {
+          user: true,
+        },
+      },
+    },
+  });
+}
+
+/**
  * Get organization bounty data (funded bounties + stats)
  * Similar to getBountyDataByGitHubId but for orgs
  */
