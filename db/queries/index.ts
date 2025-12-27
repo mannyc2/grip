@@ -4,6 +4,7 @@ export * from './submissions';
 export * from './payouts';
 export * from './passkeys';
 export * from './users';
+export * from './notification-preferences';
 
 // Backwards compatibility aliases (Session 1 → Session 2 migration)
 // These allow incremental migration without breaking all imports at once

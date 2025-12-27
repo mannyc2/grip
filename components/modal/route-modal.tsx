@@ -34,7 +34,7 @@ export function RouteModal({ children, title = 'Modal' }: RouteModalProps) {
 
   return (
     <Dialog open onOpenChange={handleOpenChange}>
-      <DialogContent className="max-h-[90vh] max-w-4xl overflow-auto p-0">
+      <DialogContent className="max-h-[90vh] sm:max-w-6xl overflow-auto p-0">
         <DialogTitle className="sr-only">{title}</DialogTitle>
         {children}
       </DialogContent>

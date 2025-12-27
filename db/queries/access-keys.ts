@@ -45,6 +45,20 @@ export async function getAccessKeyById(id: string) {
 }
 
 /**
+ * Get Access Key by ID with user ownership validation.
+ * Used for access key detail pages to ensure users can only view their own keys.
+ */
+export async function getAccessKeyByIdForUser(id: string, userId: string) {
+  const keys = await db
+    .select()
+    .from(accessKeys)
+    .where(and(eq(accessKeys.id, id), eq(accessKeys.userId, userId), networkFilter(accessKeys)))
+    .limit(1);
+
+  return keys[0] ?? null;
+}
+
+/**
  * Validate Access Key can be used for a payout
  * Checks: status is active, not expired, has sufficient limits
  */
