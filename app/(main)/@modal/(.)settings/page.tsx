@@ -1,7 +1,7 @@
 import { getSession } from '@/lib/auth/auth-server';
-import { ProfileContent } from './_components/content/profile-content';
+import { ProfileContent } from '../../settings/_components/content/profile-content';
 
-export default async function SettingsProfilePage() {
+export default async function SettingsProfileModal() {
   const session = await getSession();
   if (!session?.user) {
     return null;

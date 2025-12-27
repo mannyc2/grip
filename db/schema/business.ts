@@ -821,3 +821,44 @@ export const accessKeys = pgTable(
     )`,
   })
 );
+
+// ============================================================================
+// NOTIFICATION PREFERENCES
+// ============================================================================
+
+/**
+ * Notification Preferences table
+ *
+ * Cross-hatch pattern: users control notifications by type AND channel.
+ * Defaults are opinionated for good UX - users opt OUT of what they don't want.
+ *
+ * Design decisions:
+ * - Columns instead of JSONB for frequently-queried settings (indexed)
+ * - Quiet hours stored as text ("22:00" format) for simplicity
+ * - Created on first access to avoid migration for existing users
+ */
+export const notificationPreferences = pgTable('notification_preferences', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => user.id, { onDelete: 'cascade' }),
+
+  // Email preferences by notification type (sane defaults: most ON)
+  emailBountyFunded: boolean('email_bounty_funded').notNull().default(true),
+  emailSubmissionReceived: boolean('email_submission_received').notNull().default(true),
+  emailBountyCompleted: boolean('email_bounty_completed').notNull().default(true),
+  emailPayoutReceived: boolean('email_payout_received').notNull().default(true),
+  emailWeeklyDigest: boolean('email_weekly_digest').notNull().default(false),
+
+  // In-app preferences (global toggle)
+  inAppEnabled: boolean('in_app_enabled').notNull().default(true),
+
+  // Quiet hours (nullable = not configured)
+  quietHoursStart: text('quiet_hours_start'), // "22:00" format
+  quietHoursEnd: text('quiet_hours_end'), // "08:00" format
+  quietHoursTimezone: text('quiet_hours_timezone').default('UTC'),
+
+  updatedAt: timestamp('updated_at', { mode: 'string' })
+    .defaultNow()
+    .notNull()
+    .$onUpdate(() => new Date().toISOString()),
+});

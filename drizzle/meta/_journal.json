@@ -127,6 +127,13 @@
       "when": 1766640903570,
       "tag": "0017_dapper_dark_beast",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1766791120313,
+      "tag": "0018_nice_leech",
+      "breakpoints": true
     }
   ]
 }
