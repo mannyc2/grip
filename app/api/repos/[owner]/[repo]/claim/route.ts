@@ -30,8 +30,8 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
 
     // Include callbackUrl in state if not production (enables dev proxy)
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const productionUrl = 'https://usegrip.xyz';
-    const callbackUrl = appUrl !== productionUrl ? `${appUrl}/api/github/callback` : undefined;
+    const isProduction = appUrl.includes('usegrip.xyz');
+    const callbackUrl = !isProduction ? `${appUrl}/api/github/callback` : undefined;
 
     // Generate signed state for the installation callback
     const state = signClaimState({

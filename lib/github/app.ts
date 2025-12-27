@@ -5,7 +5,7 @@
  * Used for the repository claiming flow.
  */
 
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, createPrivateKey, timingSafeEqual } from 'node:crypto';
 import { importPKCS8, SignJWT } from 'jose';
 
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -55,7 +55,12 @@ export async function generateAppJWT(): Promise<string> {
   // Handle escaped newlines in env var
   const formattedKey = privateKey.replace(/\\n/g, '\n');
 
-  const key = await importPKCS8(formattedKey, 'RS256');
+  // Convert to PKCS#8 format - GitHub generates PKCS#1 keys by default,
+  // but jose's importPKCS8 requires PKCS#8 format
+  const keyObject = createPrivateKey(formattedKey);
+  const pkcs8Key = keyObject.export({ type: 'pkcs8', format: 'pem' }) as string;
+
+  const key = await importPKCS8(pkcs8Key, 'RS256');
   const now = Math.floor(Date.now() / 1000);
 
   return new SignJWT({})
@@ -234,21 +239,27 @@ export function verifyClaimState(signedState: string): ClaimState | null {
 
 // ============ Utility ============
 
+function getAppSlug(): string {
+  const appSlug = process.env.GITHUB_APP_SLUG;
+  if (!appSlug) {
+    throw new Error('Missing GITHUB_APP_SLUG environment variable');
+  }
+  return appSlug;
+}
+
 /**
  * Build the GitHub App installation URL for a specific repository
  */
-export function getInstallUrl(owner: string, repo: string, state: string): string {
-  const appSlug = process.env.GITHUB_APP_SLUG || 'grip-bounties';
+export function getInstallUrl(owner: string, _repo: string, state: string): string {
   const encodedState = encodeURIComponent(state);
 
   // Suggest installing on specific repo
-  return `https://github.com/apps/${appSlug}/installations/new/permissions?suggested_target_id=${owner}&repository_ids=&state=${encodedState}`;
+  return `https://github.com/apps/${getAppSlug()}/installations/new/permissions?suggested_target_id=${owner}&repository_ids=&state=${encodedState}`;
 }
 
 /**
  * Build the simple GitHub App installation URL
  */
 export function getSimpleInstallUrl(state: string): string {
-  const appSlug = process.env.GITHUB_APP_SLUG || 'grip-bounties';
-  return `https://github.com/apps/${appSlug}/installations/new?state=${encodeURIComponent(state)}`;
+  return `https://github.com/apps/${getAppSlug()}/installations/new?state=${encodeURIComponent(state)}`;
 }

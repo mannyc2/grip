@@ -9,6 +9,21 @@ import { redirect } from 'next/navigation';
 import type { NextRequest } from 'next/server';
 
 /**
+ * Extract callbackUrl from state without signature verification.
+ * Used only for dev proxy detection - the dev server will verify the full signature.
+ */
+function extractCallbackUrl(signedState: string): string | undefined {
+  try {
+    const parts = signedState.split('.');
+    if (parts.length !== 2) return undefined;
+    const data = JSON.parse(Buffer.from(parts[0], 'base64url').toString());
+    return data.callbackUrl;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * GET /api/github/callback
  *
  * Handle the callback from GitHub after App installation.
@@ -33,45 +48,46 @@ export async function GET(request: NextRequest) {
     return redirect('/?error=missing_state');
   }
 
+  // Dev proxy: redirect to localhost if callback originated from dev environment
+  // This MUST happen before state verification because dev uses a different secret.
+  // Security: Only proxy to localhost/127.0.0.1, only when running on production
+  const currentHostname = new URL(request.url).hostname;
+  const isProduction = currentHostname === 'usegrip.xyz' || currentHostname === 'www.usegrip.xyz';
+
+  if (isProduction) {
+    const callbackUrl = extractCallbackUrl(state);
+    if (callbackUrl) {
+      const DEV_HOSTS = ['localhost', '127.0.0.1'];
+      let isDevTarget = false;
+      try {
+        const targetHostname = new URL(callbackUrl).hostname;
+        isDevTarget = DEV_HOSTS.includes(targetHostname);
+      } catch {
+        isDevTarget = false;
+      }
+
+      if (isDevTarget) {
+        // Proxy to dev callback URL with same params - dev server will verify signature
+        const proxyUrl = new URL(callbackUrl);
+        proxyUrl.searchParams.set('installation_id', installationId);
+        proxyUrl.searchParams.set('state', state);
+        if (setupAction) {
+          proxyUrl.searchParams.set('setup_action', setupAction);
+        }
+
+        console.log(`[github-callback] Proxying to dev: ${proxyUrl.origin}`);
+        return redirect(proxyUrl.toString());
+      }
+
+      // Log warning if non-dev callbackUrl (potential attack attempt)
+      console.warn(`[github-callback] Ignoring non-dev callbackUrl: ${callbackUrl}`);
+    }
+  }
+
   const claimState = verifyClaimState(state);
   if (!claimState) {
     console.log('[github-callback] Invalid or expired state');
     return redirect('/?error=invalid_state');
-  }
-
-  // Dev proxy: redirect to localhost if callback originated from dev environment
-  // Security: Only proxy to localhost/127.0.0.1, only when running on production
-  if (claimState.callbackUrl) {
-    const currentHostname = new URL(request.url).hostname;
-    const isProduction = currentHostname === 'usegrip.xyz' || currentHostname === 'www.usegrip.xyz';
-
-    // Allowlist of dev hosts
-    const DEV_HOSTS = ['localhost', '127.0.0.1'];
-    let isDevTarget = false;
-    try {
-      const targetHostname = new URL(claimState.callbackUrl).hostname;
-      isDevTarget = DEV_HOSTS.includes(targetHostname);
-    } catch {
-      isDevTarget = false;
-    }
-
-    if (isProduction && isDevTarget) {
-      // Proxy to dev callback URL with same params
-      const proxyUrl = new URL(claimState.callbackUrl);
-      proxyUrl.searchParams.set('installation_id', installationId);
-      proxyUrl.searchParams.set('state', state);
-      if (setupAction) {
-        proxyUrl.searchParams.set('setup_action', setupAction);
-      }
-
-      console.log(`[github-callback] Proxying to dev: ${proxyUrl.origin}`);
-      return redirect(proxyUrl.toString());
-    }
-
-    // Log warning if non-dev callbackUrl (potential attack attempt)
-    if (!isDevTarget) {
-      console.warn(`[github-callback] Ignoring non-dev callbackUrl: ${claimState.callbackUrl}`);
-    }
   }
 
   // Verify user session matches state
