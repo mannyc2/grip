@@ -148,6 +148,7 @@ export async function updateAutoPayEnabled(githubRepoId: bigint | string, autoPa
 
 export type RepoSettingsUpdate = Partial<{
   autoPayEnabled: boolean;
+  requireOwnerApproval: boolean;
   defaultExpirationDays: number | null;
   contributorEligibility: 'anyone' | 'collaborators';
   showAmountsPublicly: boolean;

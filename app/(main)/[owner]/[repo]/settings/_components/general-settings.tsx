@@ -43,6 +43,7 @@ interface AccessKeyData {
 export function GeneralSettings({ githubRepoId }: GeneralSettingsProps) {
   // Payout settings
   const [autoPayEnabled, setAutoPayEnabled] = useState(false);
+  const [requireOwnerApproval, setRequireOwnerApproval] = useState(false);
   const [hasAccessKey, setHasAccessKey] = useState(false);
 
   // Contributor eligibility
@@ -77,6 +78,7 @@ export function GeneralSettings({ githubRepoId }: GeneralSettingsProps) {
         if (settingsRes.ok) {
           const data: RepoSettingsData = await settingsRes.json();
           setAutoPayEnabled(data.repoSettings?.autoPayEnabled ?? false);
+          setRequireOwnerApproval(data.repoSettings?.requireOwnerApproval ?? false);
           setContributorEligibility(data.repoSettings?.contributorEligibility ?? 'anyone');
           setShowAmountsPublicly(data.repoSettings?.showAmountsPublicly ?? true);
           setEmailOnSubmission(data.repoSettings?.emailOnSubmission ?? true);
@@ -130,6 +132,14 @@ export function GeneralSettings({ githubRepoId }: GeneralSettingsProps) {
     async (checked: boolean) => {
       setAutoPayEnabled(checked);
       await updateSetting({ autoPayEnabled: checked });
+    },
+    [updateSetting]
+  );
+
+  const handleRequireOwnerApprovalToggle = useCallback(
+    async (checked: boolean) => {
+      setRequireOwnerApproval(checked);
+      await updateSetting({ requireOwnerApproval: checked });
     },
     [updateSetting]
   );
@@ -233,6 +243,23 @@ export function GeneralSettings({ githubRepoId }: GeneralSettingsProps) {
               </AlertDescription>
             </Alert>
           )}
+
+          <Field orientation="horizontal">
+            <FieldLabel htmlFor="require-owner-approval">
+              <FieldContent>
+                <span className="font-medium">Require owner approval</span>
+                <FieldDescription>
+                  When enabled, bounty payouts require your explicit approval before processing.
+                </FieldDescription>
+              </FieldContent>
+            </FieldLabel>
+            <Switch
+              id="require-owner-approval"
+              checked={requireOwnerApproval}
+              onCheckedChange={handleRequireOwnerApprovalToggle}
+              disabled={isUpdating}
+            />
+          </Field>
 
           <div className="border-t pt-6">
             <div className="space-y-3">

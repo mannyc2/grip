@@ -121,6 +121,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (typeof body.autoPayEnabled === 'boolean') {
       updates.autoPayEnabled = body.autoPayEnabled;
     }
+    if (typeof body.requireOwnerApproval === 'boolean') {
+      updates.requireOwnerApproval = body.requireOwnerApproval;
+    }
     if (body.defaultExpirationDays === null || typeof body.defaultExpirationDays === 'number') {
       updates.defaultExpirationDays = body.defaultExpirationDays;
     }

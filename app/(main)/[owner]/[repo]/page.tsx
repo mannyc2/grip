@@ -92,7 +92,7 @@ export default async function ProjectPage({ params }: ProjectPageProps) {
   const openBounties = bounties.filter((b) => b.status === 'open').length;
   const completedBounties = bounties.filter((b) => b.status === 'completed').length;
   const totalFunded = bounties
-    .reduce((sum, b) => sum + BigInt(b.totalFunded), BigInt(0))
+    .reduce((sum, b) => sum + (b.totalFunded ? BigInt(b.totalFunded) : BigInt(0)), BigInt(0))
     .toString(); // Convert to string for JSON serialization
 
   // Get recent bounties

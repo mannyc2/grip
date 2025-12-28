@@ -1,12 +1,15 @@
 import { bounties, db, repoSettings } from '@/db';
+import { getActiveAccessKey } from '@/db/queries/access-keys';
 import { updateBountyStatus } from '@/db/queries/bounties';
 import {
   unclaimRepoByGithubRepoId,
   unclaimReposByInstallationId,
 } from '@/db/queries/repo-settings';
 import {
+  approveBountySubmissionAsFunder,
   findOrCreateSubmissionForGitHubUser,
   getActiveSubmissionsForBounty,
+  getSubmissionWithDetails,
   updateSubmissionStatus,
 } from '@/db/queries/submissions';
 import { findUserByGitHubUsername } from '@/db/queries/users';
@@ -26,6 +29,147 @@ import { type NextRequest, NextResponse } from 'next/server';
 
 // App-level events that use GITHUB_APP_WEBHOOK_SECRET instead of per-repo secret
 const APP_LEVEL_EVENTS = ['installation', 'installation_repositories'];
+
+/**
+ * Attempt auto-pay when PR merges
+ *
+ * Conditions for auto-pay:
+ * 1. Repo has autoPayEnabled = true
+ * 2. Repo owner is the primary funder of the bounty
+ * 3. Repo owner has an active Access Key
+ * 4. Contributor has a wallet (if no wallet, create pending payment instead)
+ *
+ * Returns true if auto-pay was successful, false otherwise.
+ */
+async function tryAutoPayOnMerge(params: {
+  repo: typeof repoSettings.$inferSelect;
+  bounty: typeof bounties.$inferSelect;
+  submissionId: string;
+  contributorUserId: string;
+}): Promise<{ success: boolean; reason?: string }> {
+  const { repo, bounty, submissionId, contributorUserId } = params;
+
+  // Check 1: Auto-pay must be enabled
+  if (!repo.autoPayEnabled) {
+    return { success: false, reason: 'Auto-pay not enabled' };
+  }
+
+  // Check 2: Repo owner must be the primary funder
+  if (!repo.verifiedOwnerUserId || repo.verifiedOwnerUserId !== bounty.primaryFunderId) {
+    return { success: false, reason: 'Repo owner is not the primary funder' };
+  }
+
+  // Check 3: Repo owner must have an active Access Key
+  const accessKey = await getActiveAccessKey(repo.verifiedOwnerUserId);
+  if (!accessKey) {
+    console.log('[webhook/auto-pay] Repo owner has no active Access Key');
+    return { success: false, reason: 'No active Access Key' };
+  }
+
+  // Get contributor's wallet
+  const { getUserWallet } = await import('@/db/queries/passkeys');
+  const contributorWallet = await getUserWallet(contributorUserId);
+
+  if (!contributorWallet?.tempoAddress) {
+    console.log('[webhook/auto-pay] Contributor has no wallet - skipping auto-pay');
+    return { success: false, reason: 'Contributor has no wallet' };
+  }
+
+  try {
+    console.log(`[webhook/auto-pay] Processing auto-pay for bounty ${bounty.id}`);
+
+    // Approve the submission
+    await approveBountySubmissionAsFunder(submissionId, repo.verifiedOwnerUserId, false);
+
+    // Get submission details
+    const submissionDetails = await getSubmissionWithDetails(submissionId);
+    if (!submissionDetails) {
+      throw new Error('Failed to get submission details');
+    }
+
+    // Create payout record
+    const { createPayout, updatePayoutStatus } = await import('@/db/queries/payouts');
+    const payout = await createPayout({
+      submissionId,
+      bountyId: bounty.id,
+      recipientUserId: contributorUserId,
+      payerUserId: repo.verifiedOwnerUserId,
+      recipientPasskeyId: contributorWallet.id,
+      recipientAddress: contributorWallet.tempoAddress,
+      amount: bounty.totalFunded,
+      tokenAddress: bounty.tokenAddress,
+      memoIssueNumber: bounty.githubIssueNumber,
+      memoPrNumber: submissionDetails.submission.githubPrNumber ?? undefined,
+      memoContributor: submissionDetails.submitter.name ?? undefined,
+    });
+
+    // Build transaction
+    const { buildPayoutTransaction } = await import('@/lib/tempo');
+    const txParams = buildPayoutTransaction({
+      tokenAddress: bounty.tokenAddress as `0x${string}`,
+      recipientAddress: contributorWallet.tempoAddress as `0x${string}`,
+      amount: BigInt(bounty.totalFunded.toString()),
+      issueNumber: bounty.githubIssueNumber,
+      prNumber: submissionDetails.submission.githubPrNumber ?? 0,
+      username: submissionDetails.submitter.name ?? 'anon',
+    });
+
+    // Get funder's wallet for signing
+    const funderWallet = await getUserWallet(repo.verifiedOwnerUserId);
+    if (!funderWallet?.tempoAddress) {
+      throw new Error('Funder wallet not found');
+    }
+
+    // Get nonce and sign transaction
+    const { tempoClient } = await import('@/lib/tempo/client');
+    const { getNetworkForInsert } = await import('@/db/network');
+    const { signTransactionWithAccessKey, broadcastTransaction } = await import(
+      '@/lib/tempo/keychain-signing'
+    );
+
+    const nonce = BigInt(
+      await tempoClient.getTransactionCount({
+        address: funderWallet.tempoAddress as `0x${string}`,
+        blockTag: 'pending',
+      })
+    );
+
+    const { rawTransaction } = await signTransactionWithAccessKey({
+      tx: {
+        to: txParams.to,
+        data: txParams.data,
+        value: txParams.value,
+        nonce,
+      },
+      funderAddress: funderWallet.tempoAddress as `0x${string}`,
+      network: getNetworkForInsert() as 'testnet' | 'mainnet',
+    });
+
+    // Broadcast transaction
+    const txHash = await broadcastTransaction(rawTransaction);
+    console.log(`[webhook/auto-pay] Transaction broadcast: ${txHash}`);
+
+    // Update payout status
+    await updatePayoutStatus(payout.id, 'pending', { txHash });
+
+    // Update bounty status to completed
+    await updateBountyStatus(bounty.id, 'completed', {
+      paidAt: new Date().toISOString(),
+    });
+
+    // Update submission status to paid
+    await updateSubmissionStatus(submissionId, 'paid');
+
+    console.log(`[webhook/auto-pay] Auto-pay successful for bounty ${bounty.id}`);
+    return { success: true };
+  } catch (error) {
+    console.error('[webhook/auto-pay] Auto-pay failed:', error);
+    return {
+      success: false,
+      reason: error instanceof Error ? error.message : 'Unknown error',
+    };
+  }
+}
 
 /**
  * GitHub Webhook Handler
@@ -347,6 +491,22 @@ async function handlePullRequest(
         console.log(
           `[webhook] Bounty ${bounty.id} submission ${userSubmission.submission.id} marked merged, awaiting payment approval`
         );
+
+        // Attempt auto-pay if enabled
+        const autoPayResult = await tryAutoPayOnMerge({
+          repo,
+          bounty,
+          submissionId: userSubmission.submission.id,
+          contributorUserId: userId,
+        });
+
+        if (autoPayResult.success) {
+          console.log(`[webhook] Auto-pay completed for bounty ${bounty.id}`);
+        } else {
+          console.log(
+            `[webhook] Auto-pay skipped for bounty ${bounty.id}: ${autoPayResult.reason}`
+          );
+        }
       }
     }
   }
