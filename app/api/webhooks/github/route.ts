@@ -10,6 +10,7 @@ import {
   updateSubmissionStatus,
 } from '@/db/queries/submissions';
 import { findUserByGitHubUsername } from '@/db/queries/users';
+import { createWebhookDelivery } from '@/db/queries/webhook-deliveries';
 import {
   type InstallationEvent,
   type InstallationRepositoriesEvent,
@@ -41,6 +42,21 @@ const APP_LEVEL_EVENTS = ['installation', 'installation_repositories'];
  * - Repo-level events verified with per-repo webhookSecret
  */
 export async function POST(request: NextRequest) {
+  // Variables for delivery logging
+  let deliveryId: string | null = null;
+  let eventType: string | null = null;
+  let eventAction: string | null = null;
+  let githubRepoId: bigint | null = null;
+  let githubInstallationId: bigint | null = null;
+  let payloadSummary: {
+    prNumber?: number;
+    issueNumber?: number;
+    username?: string;
+    repoFullName?: string;
+  } | null = null;
+  let deliveryStatus: 'success' | 'failed' = 'success';
+  let errorMessage: string | null = null;
+
   try {
     // Get raw body for signature verification
     const rawBody = await request.text();
@@ -48,9 +64,12 @@ export async function POST(request: NextRequest) {
     // Get headers
     const signature = request.headers.get('x-hub-signature-256');
     const event = request.headers.get('x-github-event');
-    const deliveryId = request.headers.get('x-github-delivery');
+    deliveryId = request.headers.get('x-github-delivery');
+    eventType = event;
 
     if (!signature || !event) {
+      deliveryStatus = 'failed';
+      errorMessage = 'Missing required headers';
       return NextResponse.json({ error: 'Missing required headers' }, { status: 400 });
     }
 
@@ -64,20 +83,35 @@ export async function POST(request: NextRequest) {
     try {
       payload = JSON.parse(rawBody);
     } catch {
+      deliveryStatus = 'failed';
+      errorMessage = 'Invalid JSON payload';
       return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 });
     }
 
+    // Extract common payload fields for logging
+    eventAction = (payload as { action?: string }).action ?? null;
+
     // Handle app-level events (installation, installation_repositories)
     if (APP_LEVEL_EVENTS.includes(event)) {
+      const installationPayload = payload as InstallationEvent | InstallationRepositoriesEvent;
+      githubInstallationId = BigInt(installationPayload.installation.id);
+      payloadSummary = {
+        username: installationPayload.installation.account.login,
+      };
+
       const appSecret = process.env.GITHUB_APP_WEBHOOK_SECRET;
       if (!appSecret) {
         console.error('[webhook] Missing GITHUB_APP_WEBHOOK_SECRET for app-level event');
+        deliveryStatus = 'failed';
+        errorMessage = 'App webhook not configured';
         return NextResponse.json({ error: 'App webhook not configured' }, { status: 500 });
       }
 
       const isValid = verifyWebhookSignature(rawBody, signature, appSecret);
       if (!isValid) {
         console.error(`[webhook] Invalid app signature for delivery ${deliveryId}`);
+        deliveryStatus = 'failed';
+        errorMessage = 'Invalid signature';
         return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
       }
 
@@ -93,10 +127,24 @@ export async function POST(request: NextRequest) {
 
     // Handle repo-level events (pull_request, issues, ping)
     // These require a repository ID and per-repo webhook secret
-    const repoId = (payload as PullRequestEvent | IssueEvent | PingEvent).repository?.id;
+    const repoPayload = payload as PullRequestEvent | IssueEvent | PingEvent;
+    const repoId = repoPayload.repository?.id;
     if (!repoId) {
+      deliveryStatus = 'failed';
+      errorMessage = 'Missing repository ID';
       return NextResponse.json({ error: 'Missing repository ID' }, { status: 400 });
     }
+
+    githubRepoId = BigInt(repoId);
+    payloadSummary = {
+      repoFullName: repoPayload.repository?.full_name,
+      username:
+        (repoPayload as PullRequestEvent).pull_request?.user?.login ??
+        (repoPayload as IssueEvent).issue?.user?.login ??
+        (repoPayload as { sender?: { login: string } }).sender?.login,
+      prNumber: (repoPayload as PullRequestEvent).pull_request?.number,
+      issueNumber: (repoPayload as IssueEvent).issue?.number,
+    };
 
     // Find repo settings by GitHub repo ID
     const [repo] = await db
@@ -106,19 +154,23 @@ export async function POST(request: NextRequest) {
       .limit(1);
 
     if (!repo) {
-      // Repo not registered with GRIP
+      // Repo not registered with GRIP - still log but don't process
       return NextResponse.json({ message: 'Repository not registered' }, { status: 200 });
     }
 
     // Verify webhook signature with per-repo secret
     if (!repo.webhookSecret) {
       console.error(`[webhook] Repo ${repo.githubRepoId} has no webhook secret`);
+      deliveryStatus = 'failed';
+      errorMessage = 'Webhook not configured';
       return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 });
     }
 
     const isValid = verifyWebhookSignature(rawBody, signature, repo.webhookSecret);
     if (!isValid) {
       console.error(`[webhook] Invalid signature for delivery ${deliveryId}`);
+      deliveryStatus = 'failed';
+      errorMessage = 'Invalid signature';
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
     }
 
@@ -139,7 +191,26 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     console.error('[webhook] Error processing webhook:', error);
+    deliveryStatus = 'failed';
+    errorMessage = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  } finally {
+    // Log webhook delivery (fire-and-forget, don't block response)
+    if (deliveryId && eventType) {
+      createWebhookDelivery({
+        githubDeliveryId: deliveryId,
+        githubRepoId,
+        githubInstallationId,
+        eventType,
+        action: eventAction,
+        status: deliveryStatus,
+        errorMessage,
+        payloadSummary,
+        processedAt: new Date(),
+      }).catch((err) => {
+        console.error('[webhook] Failed to log delivery:', err);
+      });
+    }
   }
 }
 
