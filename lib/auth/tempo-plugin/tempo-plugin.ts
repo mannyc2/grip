@@ -2,10 +2,12 @@ import { db } from '@/db';
 import { getCurrentNetwork, getNetworkForInsert } from '@/db/network';
 import { accessKeys, activityLog } from '@/db/schema/business';
 import type { BetterAuthPlugin } from 'better-auth';
-import { createAuthEndpoint, createAuthMiddleware } from 'better-auth/api';
+import { createAuthEndpoint, createAuthMiddleware, sessionMiddleware } from 'better-auth/api';
 import { and, eq } from 'drizzle-orm';
-import { KeyAuthorization } from 'tempo.ts/ox';
-import { keccak256, toHex } from 'viem';
+import * as Address from 'ox/Address';
+import * as PublicKey from 'ox/PublicKey';
+import { KeyAuthorization } from 'ox/tempo';
+import { toHex } from 'viem';
 import type {
   AccessKeyStatus,
   CreateAccessKeyRequest,
@@ -149,26 +151,28 @@ function decodeCosePublicKey(publicKeyBytes: Uint8Array): { x: Uint8Array; y: Ui
 }
 
 /**
- * Derive Tempo address from P256 public key coordinates
+ * Derive Tempo address from P256 public key (COSE format from better-auth)
  *
- * Uses the same algorithm as Ethereum address derivation:
- * 1. Concatenate x and y coordinates (64 bytes)
- * 2. Hash with keccak256
- * 3. Take last 20 bytes (40 hex chars)
+ * Uses tempo.ts primitives for address derivation:
+ * 1. Decode COSE to extract x,y coordinates (32 bytes each)
+ * 2. Convert to uncompressed hex format (64 bytes: x || y)
+ * 3. Use Address.fromPublicKey(PublicKey.fromHex()) from tempo.ts
  */
 export function deriveTempoAddress(publicKeyBytes: Uint8Array): `0x${string}` {
   const { x, y } = decodeCosePublicKey(publicKeyBytes);
 
-  // Concatenate x || y (64 bytes total)
+  // Concatenate x || y (64 bytes total) and convert to hex
   const combined = new Uint8Array(64);
   combined.set(x, 0);
   combined.set(y, 32);
+  const publicKeyHex = toHex(combined);
 
-  // keccak256 hash
-  const hash = keccak256(toHex(combined));
+  // Use tempo.ts primitives for address derivation
+  // This handles keccak256 hashing and taking last 20 bytes
+  const publicKey = PublicKey.fromHex(publicKeyHex);
+  const address = Address.fromPublicKey(publicKey);
 
-  // Take last 40 hex chars (20 bytes) as address
-  return `0x${hash.slice(-40)}` as `0x${string}`;
+  return address;
 }
 
 /**
@@ -208,11 +212,32 @@ function base64UrlToHex(base64url: string): string {
 }
 
 /**
- * Convert base64 to hex format
+ * Convert base64 COSE key to hex format (using tempo.ts primitives)
+ *
+ * COSE keys from better-auth are CBOR-encoded (77 bytes with metadata).
+ * Tempo SDK expects 64-byte hex format (x || y coordinates).
+ *
+ * This function:
+ * 1. Decodes COSE to extract x,y coordinates
+ * 2. Converts to hex format expected by tempo.ts KeyManager
  */
 function base64ToHex(base64: string): string {
   const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-  return toHex(bytes);
+
+  // Decode COSE using the existing decoder
+  const { x, y } = decodeCosePublicKey(bytes);
+
+  // Concatenate x || y (64 bytes total) and convert to hex
+  const combined = new Uint8Array(64);
+  combined.set(x, 0);
+  combined.set(y, 32);
+  const publicKeyHex = toHex(combined);
+
+  process.stderr.write(
+    `[base64ToHex] ✅ Converted COSE to ${combined.length}-byte hex: ${publicKeyHex.slice(0, 20)}...\n`
+  );
+
+  return publicKeyHex;
 }
 
 /**
@@ -244,6 +269,7 @@ export const tempo = (config: TempoPluginConfig) => {
         '/tempo/access-keys',
         {
           method: 'POST',
+          use: [sessionMiddleware],
         },
         async (ctx) => {
           // Require authentication
@@ -406,6 +432,7 @@ export const tempo = (config: TempoPluginConfig) => {
         '/tempo/access-keys',
         {
           method: 'GET',
+          use: [sessionMiddleware],
         },
         async (ctx) => {
           // Require authentication
@@ -448,6 +475,7 @@ export const tempo = (config: TempoPluginConfig) => {
         '/tempo/access-keys/:id',
         {
           method: 'GET',
+          use: [sessionMiddleware],
         },
         async (ctx) => {
           // Require authentication
@@ -493,6 +521,7 @@ export const tempo = (config: TempoPluginConfig) => {
         '/tempo/access-keys/:id',
         {
           method: 'DELETE',
+          use: [sessionMiddleware],
         },
         async (ctx) => {
           // Require authentication
@@ -575,6 +604,7 @@ export const tempo = (config: TempoPluginConfig) => {
         '/tempo/passkeys',
         {
           method: 'GET',
+          use: [sessionMiddleware], // Required to load session into ctx.context.session
         },
         async (ctx) => {
           // Require authentication
@@ -607,13 +637,26 @@ export const tempo = (config: TempoPluginConfig) => {
         '/tempo/keymanager',
         {
           method: 'GET',
+          use: [sessionMiddleware], // Required to load session into ctx.context.session
         },
         async (ctx) => {
+          // Debug session check
+          process.stderr.write(
+            `[KeyManager GET] Session check: ${JSON.stringify({
+              hasSession: !!ctx.context.session,
+              hasUser: !!ctx.context.session?.user,
+              userId: ctx.context.session?.user?.id || 'NONE',
+            })}\n`
+          );
+
           // Require authentication
           const session = ctx.context.session;
           if (!session?.user) {
+            process.stderr.write('[KeyManager GET] ❌ UNAUTHORIZED - No session found\n');
             return ctx.json({ error: 'Unauthorized' }, { status: 401 });
           }
+
+          process.stderr.write(`[KeyManager GET] ✅ Authenticated as userId=${session.user.id}\n`);
 
           // Parse query params
           if (!ctx.request?.url) {
@@ -621,6 +664,12 @@ export const tempo = (config: TempoPluginConfig) => {
           }
           const url = new URL(ctx.request.url);
           const credentialId = url.searchParams.get('credentialId');
+
+          // Debug logging - use process.stdout.write to bypass buffering
+          const timestamp = new Date().toISOString();
+          const logMsg = `${timestamp} [KeyManager GET] credentialId=${credentialId || 'NONE'} userId=${session.user.id}\n`;
+          process.stdout.write(logMsg);
+          process.stderr.write(logMsg);
 
           // If credentialId provided, load specific key
           if (credentialId) {
@@ -642,8 +691,31 @@ export const tempo = (config: TempoPluginConfig) => {
             const passkey = passkeys[0];
 
             if (!passkey) {
+              process.stderr.write(
+                `[KeyManager GET] ❌ NOT FOUND for credentialId: ${credentialId}\n`
+              );
+
+              // Debug: Show what passkeys exist for this user
+              const allUserPasskeys = (await ctx.context.adapter.findMany({
+                model: 'passkey',
+                where: [{ field: 'userId', value: session.user.id }],
+              })) as PasskeyRecord[];
+
+              process.stderr.write(
+                `[KeyManager GET] User has ${allUserPasskeys.length} passkey(s):\n`
+              );
+              allUserPasskeys.forEach((p, i) => {
+                process.stderr.write(
+                  `  ${i + 1}. credentialID="${p.credentialID}" tempoAddress=${p.tempoAddress || 'NONE'}\n`
+                );
+              });
+
               return ctx.json({ error: 'Key not found' }, { status: 404 });
             }
+
+            process.stdout.write(
+              `[KeyManager GET] ✅ FOUND passkey with tempoAddress=${passkey.tempoAddress || 'NONE'}\n`
+            );
 
             // Convert to KeyManager format
             const response: LoadKeyResponse = {
@@ -656,6 +728,8 @@ export const tempo = (config: TempoPluginConfig) => {
           }
 
           // Otherwise, list all keys
+          process.stdout.write('[KeyManager GET] Listing all keys...\n');
+
           const passkeys = (await ctx.context.adapter.findMany({
             model: 'passkey',
             where: [
@@ -670,12 +744,21 @@ export const tempo = (config: TempoPluginConfig) => {
             },
           })) as PasskeyRecord[];
 
+          process.stdout.write(`[KeyManager GET] Found ${passkeys.length} passkey(s)\n`);
+          passkeys.forEach((p, i) => {
+            process.stdout.write(
+              `  ${i + 1}. credentialID="${p.credentialID}" tempoAddress=${p.tempoAddress || 'NONE'}\n`
+            );
+          });
+
           // Convert to KeyManager format
           const keys = passkeys.map((p) => ({
             credentialId: p.credentialID,
             publicKey: base64ToHex(p.publicKey),
             address: p.tempoAddress || '',
           }));
+
+          process.stdout.write(`[KeyManager GET] Returning ${keys.length} key(s)\n`);
 
           return ctx.json({ keys } as ListKeysResponse);
         }
@@ -686,6 +769,7 @@ export const tempo = (config: TempoPluginConfig) => {
         '/tempo/keymanager',
         {
           method: 'POST',
+          use: [sessionMiddleware], // Required to load session into ctx.context.session
         },
         async (ctx) => {
           // Require authentication
