@@ -716,14 +716,25 @@ export const tempo = (config: TempoPluginConfig) => {
             process.stdout.write(
               `[KeyManager GET] ✅ FOUND passkey with tempoAddress=${passkey.tempoAddress || 'NONE'}\n`
             );
+            process.stderr.write(
+              `[KeyManager GET] Raw publicKey (base64) length: ${passkey.publicKey.length} chars\n`
+            );
 
             // Convert to KeyManager format
+            const publicKeyHex = base64ToHex(passkey.publicKey);
+            process.stderr.write(
+              `[KeyManager GET] Converted publicKey to hex: ${publicKeyHex.slice(0, 30)}... (${publicKeyHex.length} chars)\n`
+            );
+
             const response: LoadKeyResponse = {
               credentialId: passkey.credentialID,
-              publicKey: base64ToHex(passkey.publicKey),
+              publicKey: publicKeyHex,
               address: passkey.tempoAddress || '',
             };
 
+            process.stderr.write(
+              `[KeyManager GET] Returning response with publicKey length: ${response.publicKey.length}\n`
+            );
             return ctx.json(response);
           }
 
