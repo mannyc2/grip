@@ -178,10 +178,13 @@ export const test = base.extend<TestFixtures>({
       return;
     }
 
+    console.log('[virtualAuthenticator] Creating CDP session for WebAuthn');
+
     // Create CDP session for WebAuthn control
     const client = await page.context().newCDPSession(page);
 
     await client.send('WebAuthn.enable');
+    console.log('[virtualAuthenticator] WebAuthn.enable sent');
 
     const { authenticatorId } = await client.send('WebAuthn.addVirtualAuthenticator', {
       options: {
@@ -193,15 +196,18 @@ export const test = base.extend<TestFixtures>({
         automaticPresenceSimulation: true,
       },
     });
+    console.log('[virtualAuthenticator] Virtual authenticator created:', authenticatorId);
 
     await use({ authenticatorId, cdpSession: client });
 
     // Cleanup
+    console.log('[virtualAuthenticator] Cleaning up authenticator:', authenticatorId);
     try {
       await client.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId });
       await client.send('WebAuthn.disable');
-    } catch {
-      // Page/context already closed
+      console.log('[virtualAuthenticator] Cleanup complete');
+    } catch (err) {
+      console.log('[virtualAuthenticator] Cleanup skipped (page/context closed)');
     }
   },
 });

@@ -13,6 +13,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
@@ -28,7 +29,7 @@ import type { AccessKeyLimits, ActivityMetadata, GithubLabel, NotificationMetada
  * - bounty_funders.amount = promised amount, NOT deposited
  * - Payout = funder signs tx, sends directly to contributor
  *
- * We're a coordination layer, not custody. Like tinygrad's spreadsheet — tracking who promised what.
+ * We're a coordination layer, not custody
  *
  * Tables:
  * - tokens: TIP-20 token allowlist
@@ -60,11 +61,6 @@ import type { AccessKeyLimits, ActivityMetadata, GithubLabel, NotificationMetada
  *
  * Postgres numeric(78,0) stores full uint256 range.
  * Drizzle mode: "bigint" returns JavaScript BigInt.
- *
- * App layer must:
- * - Use .toString() for JSON serialization
- * - Parse with BigInt() constructor
- * - Format for display: amount / 1_000_000n
  */
 const u256 = (name: string) => numeric(name, { precision: 78, scale: 0 }).$type<bigint>();
 
@@ -824,12 +820,10 @@ export const accessKeys = pgTable(
   },
   (table) => ({
     // Ensure one active access key per user per network per backend wallet
-    // Note: Partial unique index (WHERE status = 'active') allows multiple revoked/expired keys
-    uniqueActiveKey: unique('idx_access_keys_unique_active').on(
-      table.userId,
-      table.backendWalletAddress,
-      table.network
-    ),
+    // Partial unique index: only enforced when status = 'active', allows multiple revoked/expired keys
+    uniqueActiveKey: uniqueIndex('idx_access_keys_unique_active')
+      .on(table.userId, table.backendWalletAddress, table.network)
+      .where(sql`${table.status} = 'active'`),
     idxAccessKeysUser: index('idx_access_keys_user').on(table.userId, table.network),
     idxAccessKeysOrg: index('idx_access_keys_org').on(table.organizationId, table.network),
     idxAccessKeysAuthorizedUser: index('idx_access_keys_authorized_user').on(

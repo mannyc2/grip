@@ -8,7 +8,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 dotenv.config({ path: '.env.development.local' });
 
-import { db, user, session } from './db';
+import { db, user, session, account } from './db';
 import { TEST_USERS } from './fixtures';
 
 /**
@@ -59,6 +59,24 @@ setup('setup auth and db', async () => {
         email: testUser.email,
         emailVerified: true,
         githubUserId: BigInt(testUser.githubUserId),
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    // Ensure GitHub account record exists (required for organization creation)
+    const existingAccount = await db
+      .select()
+      .from(account)
+      .where(eq(account.userId, testUser.id))
+      .limit(1);
+
+    if (existingAccount.length === 0) {
+      await db.insert(account).values({
+        id: `account-${testUser.id}`,
+        accountId: testUser.githubUserId,
+        providerId: 'github',
+        userId: testUser.id,
         createdAt: now,
         updatedAt: now,
       });

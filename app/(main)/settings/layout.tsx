@@ -16,16 +16,21 @@ export default async function SettingsLayout({
   }
 
   return (
-    <SidebarProvider style={{ '--sidebar-top': '4rem' } as React.CSSProperties}>
-      <SettingsSidebar user={data.user} organizations={data.organizations} />
-      <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
-          <SidebarTrigger className="-ml-1" />
-          <span className="font-semibold">Settings</span>
-        </header>
-        <div className="flex flex-1 flex-col gap-4 p-4">{children}</div>
-      </SidebarInset>
-      {modal}
-    </SidebarProvider>
+    <div className="h-[calc(100dvh-4rem)] overflow-hidden">
+      <SidebarProvider
+        className="h-full !min-h-0"
+        style={{ '--sidebar-top': '4rem' } as React.CSSProperties}
+      >
+        <SettingsSidebar user={data.user} organizations={data.organizations} />
+        <SidebarInset className="flex flex-col !overflow-hidden">
+          <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
+            <SidebarTrigger className="-ml-1" />
+            <span className="font-semibold">Settings</span>
+          </header>
+          <div className="flex-1 min-h-0 overflow-auto p-4">{children}</div>
+        </SidebarInset>
+        {modal}
+      </SidebarProvider>
+    </div>
   );
 }

@@ -1,6 +1,15 @@
 'use client';
 
-import { UserAvatar } from '@/components/user/user-avatar';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { Item, ItemContent, ItemDescription, ItemMedia, ItemTitle } from '@/components/ui/item';
 import {
   Sidebar,
   SidebarContent,
@@ -12,10 +21,10 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-  SidebarSeparator,
   useSidebar,
 } from '@/components/ui/sidebar';
-import { Building2, LogOut } from 'lucide-react';
+import { UserAvatar } from '@/components/user/user-avatar';
+import { Building2, ChevronsUpDown, LogOut } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { signOut } from '@/lib/auth/auth-client';
@@ -52,6 +61,9 @@ export function SettingsSidebar({
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
 
+  // When in full page context (not modal), use native <a> to avoid route interception
+  const isModalContext = collapsible === 'none';
+
   const handleNavClick = () => {
     if (isMobile) {
       setOpenMobile(false);
@@ -78,10 +90,17 @@ export function SettingsSidebar({
                       isActive={pathname === link.href}
                       tooltip={link.label}
                       render={
-                        <Link href={link.href} onClick={handleNavClick}>
-                          <link.icon className="size-4" />
-                          <span>{link.label}</span>
-                        </Link>
+                        isModalContext ? (
+                          <Link href={link.href} replace onClick={handleNavClick}>
+                            <link.icon className="size-4" />
+                            <span>{link.label}</span>
+                          </Link>
+                        ) : (
+                          <a href={link.href} onClick={handleNavClick}>
+                            <link.icon className="size-4" />
+                            <span>{link.label}</span>
+                          </a>
+                        )
                       }
                     />
                   </SidebarMenuItem>
@@ -113,13 +132,20 @@ export function SettingsSidebar({
                 organizations.map((org) => (
                   <SidebarMenuItem key={org.id}>
                     <SidebarMenuButton
-                      isActive={pathname === `/settings/organizations/${org.id}`}
+                      isActive={pathname === `/${org.slug}/settings`}
                       tooltip={org.name || org.slug}
                       render={
-                        <Link href={`/settings/organizations/${org.id}`} onClick={handleNavClick}>
-                          <Building2 className="size-4" />
-                          <span>{org.name || org.slug}</span>
-                        </Link>
+                        isModalContext ? (
+                          <Link href={`/${org.slug}/settings`} onClick={handleNavClick}>
+                            <Building2 className="size-4" />
+                            <span>{org.name || org.slug}</span>
+                          </Link>
+                        ) : (
+                          <a href={`/${org.slug}/settings`} onClick={handleNavClick}>
+                            <Building2 className="size-4" />
+                            <span>{org.name || org.slug}</span>
+                          </a>
+                        )
                       }
                     />
                   </SidebarMenuItem>
@@ -130,33 +156,48 @@ export function SettingsSidebar({
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t">
-        <SidebarSeparator className="mx-0" />
+      <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip={user.name || 'User'}
-              className="h-auto py-2"
-              render={
-                <div className="flex items-center gap-2 w-full">
-                  <UserAvatar user={user} size="sm" />
-                  <div className="flex-1 min-w-0 group-data-[collapsible=icon]:hidden">
-                    <p className="text-sm font-medium truncate">{user.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{user.email}</p>
-                  </div>
-                </div>
-              }
-            />
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip="Sign out"
-              onClick={handleSignOut}
-              className="text-destructive hover:text-destructive"
-            >
-              <LogOut className="size-4" />
-              <span>Sign Out</span>
-            </SidebarMenuButton>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <SidebarMenuButton
+                    size="lg"
+                    className="data-open:bg-sidebar-accent data-open:text-sidebar-accent-foreground"
+                  >
+                    <UserAvatar user={user} size="sm" />
+                    <div className="grid flex-1 text-left text-sm leading-tight">
+                      <span className="truncate font-medium">{user.name}</span>
+                      <span className="truncate text-xs text-muted-foreground">{user.email}</span>
+                    </div>
+                    <ChevronsUpDown className="ml-auto size-4" />
+                  </SidebarMenuButton>
+                }
+              />
+              <DropdownMenuContent side="top" align="start" className="w-[--anchor-width]">
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>
+                    <Item size="xs">
+                      <ItemMedia>
+                        <UserAvatar user={user} size="sm" />
+                      </ItemMedia>
+                      <ItemContent>
+                        <ItemTitle>{user.name}</ItemTitle>
+                        <ItemDescription>{user.email}</ItemDescription>
+                      </ItemContent>
+                    </Item>
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
+                <DropdownMenuGroup>
+                  <DropdownMenuItem onClick={handleSignOut}>
+                    <LogOut className="size-4" />
+                    Log out
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

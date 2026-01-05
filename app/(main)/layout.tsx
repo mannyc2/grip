@@ -15,9 +15,9 @@ export default function MainLayout({
   modal: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-background">
+    <div className="flex min-h-screen flex-col bg-background">
       <Navbar />
-      <main>{children}</main>
+      <main className="flex-1">{children}</main>
       {modal}
     </div>
   );

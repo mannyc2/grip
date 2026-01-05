@@ -2,7 +2,7 @@ import { auth } from '@/lib/auth/auth';
 import { toNextJsHandler } from 'better-auth/next-js';
 import { type NextRequest, NextResponse } from 'next/server';
 
-const { GET: originalGET, POST } = toNextJsHandler(auth);
+const { GET: originalGET, POST, DELETE } = toNextJsHandler(auth);
 
 /**
  * Wrapped GET handler to enforce ES256 (P-256) for passkey registration.
@@ -46,4 +46,4 @@ async function GET(request: NextRequest) {
   }
 }
 
-export { GET, POST };
+export { GET, POST, DELETE };

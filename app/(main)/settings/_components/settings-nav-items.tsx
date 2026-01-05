@@ -1,4 +1,4 @@
-import { Bell, Building2, Key, TrendingUp, User, Wallet, type LucideIcon } from 'lucide-react';
+import { Bell, Building2, Key, User, Wallet, type LucideIcon } from 'lucide-react';
 
 export interface NavItem {
   href: string;
@@ -18,8 +18,8 @@ export const settingsNavGroups: NavGroup[] = [
     items: [
       { href: '/settings', label: 'Profile', icon: User },
       { href: '/settings/wallet', label: 'Wallet', icon: Wallet },
-      { href: '/settings/activity', label: 'Activity', icon: TrendingUp },
       { href: '/settings/access-keys', label: 'Access Keys', icon: Key },
+      { href: '/settings/organizations', label: 'Organizations', icon: Building2 },
       { href: '/settings/notifications', label: 'Notifications', icon: Bell },
     ],
   },

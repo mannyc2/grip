@@ -55,6 +55,7 @@ export function ProfileContent({ user }: ProfileContentProps) {
             <Button
               variant="outline"
               size="sm"
+              nativeButton={false}
               render={
                 <a
                   href="https://github.com/settings/profile"

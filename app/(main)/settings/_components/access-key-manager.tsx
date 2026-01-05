@@ -6,7 +6,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { AlertCircle, ChevronRight, Key, Shield } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
-import { CreateAccessKeyModal } from './create-access-key-modal';
 
 type AccessKey = {
   id: string;
@@ -20,13 +19,18 @@ type AccessKey = {
 };
 
 type AccessKeyManagerProps = {
-  initialKeys: AccessKey[];
+  keys: AccessKey[];
+  onKeysChange: (keys: AccessKey[]) => void;
+  onCreateClick: () => void;
   credentialId: string;
 };
 
-export function AccessKeyManager({ initialKeys, credentialId }: AccessKeyManagerProps) {
-  const [keys, setKeys] = useState(initialKeys);
-  const [showCreateModal, setShowCreateModal] = useState(false);
+export function AccessKeyManager({
+  keys,
+  onKeysChange,
+  onCreateClick,
+  credentialId,
+}: AccessKeyManagerProps) {
   const [revoking, setRevoking] = useState<string | null>(null);
 
   async function handleRevoke(keyId: string) {
@@ -41,7 +45,6 @@ export function AccessKeyManager({ initialKeys, credentialId }: AccessKeyManager
     try {
       setRevoking(keyId);
 
-      // Revoke Access Key via Better Auth plugin
       const res = await fetch(`/api/auth/tempo/access-keys/${keyId}`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
@@ -50,25 +53,19 @@ export function AccessKeyManager({ initialKeys, credentialId }: AccessKeyManager
         }),
       });
 
+      const data = await res.json();
+
       if (!res.ok) {
-        const data = await res.json();
         throw new Error(data.error || 'Failed to revoke Access Key');
       }
 
-      const { accessKey } = await res.json();
-
-      // Update local state
-      setKeys(keys.map((k) => (k.id === keyId ? accessKey : k)));
+      onKeysChange(keys.map((k) => (k.id === keyId ? data.accessKey : k)));
     } catch (err) {
       console.error('Revoke error:', err);
       alert(err instanceof Error ? err.message : 'Failed to revoke Access Key');
     } finally {
       setRevoking(null);
     }
-  }
-
-  function handleCreateSuccess(newKey: AccessKey) {
-    setKeys([...keys, newKey]);
   }
 
   const activeKeys = keys.filter((k) => k.status === 'active');
@@ -88,7 +85,7 @@ export function AccessKeyManager({ initialKeys, credentialId }: AccessKeyManager
             </CardDescription>
           </div>
           {activeKeys.length === 0 && (
-            <Button onClick={() => setShowCreateModal(true)} size="sm">
+            <Button onClick={onCreateClick} size="sm">
               Enable Auto-Pay
             </Button>
           )}
@@ -97,7 +94,7 @@ export function AccessKeyManager({ initialKeys, credentialId }: AccessKeyManager
 
       <CardContent className="space-y-6">
         {keys.length === 0 ? (
-          <EmptyState onCreateClick={() => setShowCreateModal(true)} />
+          <EmptyState onCreateClick={onCreateClick} />
         ) : (
           <>
             {activeKeys.length > 0 && (
@@ -132,14 +129,6 @@ export function AccessKeyManager({ initialKeys, credentialId }: AccessKeyManager
               </div>
             )}
           </>
-        )}
-
-        {showCreateModal && (
-          <CreateAccessKeyModal
-            open={showCreateModal}
-            onOpenChange={setShowCreateModal}
-            onSuccess={handleCreateSuccess}
-          />
         )}
       </CardContent>
     </Card>
@@ -177,7 +166,6 @@ function AccessKeyListItem({
   const isActive = accessKey.status === 'active';
   const isExpired = accessKey.expiry && Date.now() / 1000 > accessKey.expiry;
 
-  // Get spending limit from limits object
   const limitEntries = Object.entries(accessKey.limits);
   const totalLimit =
     limitEntries.length > 0

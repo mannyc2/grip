@@ -1,10 +1,11 @@
 'use client';
 
 import { AccessKeyManager } from '@/app/(main)/settings/_components/access-key-manager';
+import { CreateAccessKeyInline } from '@/app/(main)/settings/_components/create-access-key-inline';
 import { AddressDisplay } from '@/components/tempo/address-display';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { ExternalLink, Key, Wallet } from 'lucide-react';
+import { ExternalLink, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -45,10 +46,13 @@ type AccessKey = {
  * This component displays the treasury status and balance.
  * No separate treasury setup needed - it's auto-configured via owner's passkey.
  */
+type AccessKeyView = 'main' | 'create';
+
 export function TreasurySettings({ githubRepoId }: TreasurySettingsProps) {
   const [treasuryInfo, setTreasuryInfo] = useState<TreasuryInfo | null>(null);
   const [accessKeys, setAccessKeys] = useState<AccessKey[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [accessKeyView, setAccessKeyView] = useState<AccessKeyView>('main');
 
   const fetchData = useCallback(async () => {
     try {
@@ -180,7 +184,22 @@ export function TreasurySettings({ githubRepoId }: TreasurySettingsProps) {
         {/* Access Keys Section */}
         {treasuryInfo.credentialId && (
           <div className="mt-6">
-            <AccessKeyManager initialKeys={accessKeys} credentialId={treasuryInfo.credentialId} />
+            {accessKeyView === 'create' ? (
+              <CreateAccessKeyInline
+                onSuccess={(newKey) => {
+                  setAccessKeys([...accessKeys, newKey]);
+                  setAccessKeyView('main');
+                }}
+                onBack={() => setAccessKeyView('main')}
+              />
+            ) : (
+              <AccessKeyManager
+                keys={accessKeys}
+                onKeysChange={setAccessKeys}
+                onCreateClick={() => setAccessKeyView('create')}
+                credentialId={treasuryInfo.credentialId}
+              />
+            )}
           </div>
         )}
       </>

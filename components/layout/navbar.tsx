@@ -178,7 +178,11 @@ export function Navbar() {
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
-                    <Button variant="ghost" className="h-12 justify-start px-2 gap-2">
+                    <Button
+                      variant="ghost"
+                      className="h-12 justify-start px-2 gap-2"
+                      data-testid="user-menu-trigger"
+                    >
                       {activeOrganization ? (
                         activeOrganization.logo ? (
                           <Avatar className="h-8 w-8">

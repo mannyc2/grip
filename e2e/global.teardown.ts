@@ -5,7 +5,7 @@ import { eq } from 'drizzle-orm';
 import dotenv from 'dotenv';
 dotenv.config({ path: '.env.development.local' });
 
-import { db, user, session, passkey, accessKeys, activityLog } from './db';
+import { db, user, session, passkey, accessKeys, activityLog, account } from './db';
 import { TEST_USERS } from './fixtures';
 
 /**
@@ -22,6 +22,7 @@ teardown('cleanup auth and db', async () => {
     await db.delete(accessKeys).where(eq(accessKeys.userId, userId));
     await db.delete(activityLog).where(eq(activityLog.userId, userId));
     await db.delete(passkey).where(eq(passkey.userId, userId));
+    await db.delete(account).where(eq(account.userId, userId));
     await db.delete(session).where(eq(session.userId, userId));
 
     // Delete test user last

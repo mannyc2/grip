@@ -1,6 +1,7 @@
+import { getUserDashboardStats } from '@/db/queries/bounties';
 import { getPasskeysByUser } from '@/db/queries/passkeys';
 import { getSession } from '@/lib/auth/auth-server';
-import { WalletContent } from '../../../settings/_components/content/wallet-content';
+import { WalletContent } from '../../../settings/wallet/_components/wallet-content';
 
 export default async function WalletSettingsModal() {
   const session = await getSession();
@@ -8,7 +9,11 @@ export default async function WalletSettingsModal() {
     return null;
   }
 
-  const passkeys = await getPasskeysByUser(session.user.id);
+  const [passkeys, stats] = await Promise.all([
+    getPasskeysByUser(session.user.id),
+    getUserDashboardStats(session.user.id),
+  ]);
+
   const walletPasskey = passkeys.find((p) => p.tempoAddress) ?? null;
   const wallet = walletPasskey
     ? {
@@ -19,5 +24,5 @@ export default async function WalletSettingsModal() {
       }
     : null;
 
-  return <WalletContent wallet={wallet} isModal />;
+  return <WalletContent wallet={wallet} stats={stats} isModal />;
 }

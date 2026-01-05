@@ -1,6 +1,6 @@
-import { account, bounties, db, passkey, payouts, user } from '@/db';
+import { account, bounties, db, invitation, passkey, payouts, user } from '@/db';
 import { member } from '@/db/schema/auth';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, gt, sql } from 'drizzle-orm';
 import { networkFilter } from '../network';
 
 /**
@@ -237,5 +237,39 @@ export async function getUserOrganizations(userId: string) {
       },
     },
     orderBy: (member, { asc }) => [asc(member.createdAt)],
+  });
+}
+
+/**
+ * Get pending invitations for a user by email
+ *
+ * Returns active (non-expired, pending) invitations with organization and inviter info.
+ * Used in settings/organizations to show invitations user can accept/decline.
+ */
+export async function getUserPendingInvitations(email: string) {
+  return db.query.invitation.findMany({
+    where: and(
+      eq(invitation.email, email),
+      eq(invitation.status, 'pending'),
+      gt(invitation.expiresAt, new Date())
+    ),
+    with: {
+      organization: {
+        columns: {
+          id: true,
+          name: true,
+          slug: true,
+          logo: true,
+        },
+      },
+      user: {
+        columns: {
+          id: true,
+          name: true,
+          image: true,
+        },
+      },
+    },
+    orderBy: (inv, { desc }) => [desc(inv.createdAt)],
   });
 }

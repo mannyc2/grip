@@ -14,8 +14,9 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import { ArrowLeft, ExternalLink, Key, Loader2 } from 'lucide-react';
+import { ArrowLeft, Key, Loader2 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { revokeAccessKeyAction } from '../access-keys/_actions/revoke-access-key';
 
@@ -34,6 +35,7 @@ interface AccessKeyDetailProps {
 }
 
 export function AccessKeyDetail({ accessKey, variant }: AccessKeyDetailProps) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -97,14 +99,14 @@ export function AccessKeyDetail({ accessKey, variant }: AccessKeyDetailProps) {
             Back to Access Keys
           </Link>
         ) : (
-          <Link
-            href={`/settings/access-keys/${accessKey.id}`}
-            target="_blank"
+          <button
+            type="button"
+            onClick={() => router.back()}
             className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
-            <ExternalLink className="h-4 w-4" />
-            Open in new tab
-          </Link>
+            <ArrowLeft className="h-4 w-4" />
+            Back
+          </button>
         )}
       </div>
 
