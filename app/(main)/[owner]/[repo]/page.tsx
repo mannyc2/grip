@@ -1,15 +1,13 @@
-import { BountyCard } from '@/components/bounty/bounty-card';
 import { RepoOnboardingModal } from '@/components/onboarding';
-import { getBountiesByGithubRepoId } from '@/db/queries/bounties';
+import { getRepoBountiesWithSubmissions } from '@/db/queries/bounties';
 import { getUserOnboardingInfo } from '@/db/queries/passkeys';
 import { getRepoSettingsByName } from '@/db/queries/repo-settings';
 import { getSession } from '@/lib/auth/auth-server';
 import { fetchGitHubRepo } from '@/lib/github';
-import type { Bounty, BountyProject } from '@/lib/types';
+import type { Bounty, BountyProject, SubmissionStatus } from '@/lib/types';
 import { notFound } from 'next/navigation';
-import { BountiesEmptyState } from './_components/bounties-empty-state';
-import { RepoInfoHeader } from './_components/repo-info-header';
-import { RepoStatsCard } from './_components/repo-stats-card';
+import { BountyList } from './_components/bounty-list';
+import { RepoHeader } from './_components/repo-header';
 
 interface ProjectPageProps {
   params: Promise<{ owner: string; repo: string }>;
@@ -21,11 +19,6 @@ interface ProjectPageProps {
  *
  * Works for ANY public GitHub repository, whether or not it's been "claimed".
  * Fetches from GitHub API first, then overlays GRIP data if available.
- *
- * Claiming is optional and only unlocks:
- * - Webhook auto-install (for PR merge detection)
- * - Settings access (auto-approve, payout mode)
- * - Maintainer badge on repo page
  */
 export default async function ProjectPage({ params, searchParams }: ProjectPageProps) {
   const { owner, repo } = await params;
@@ -35,7 +28,6 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
   const githubRepo = await fetchGitHubRepo(owner, repo);
 
   if (!githubRepo) {
-    // Only 404 if GitHub repo doesn't exist
     return notFound();
   }
 
@@ -53,8 +45,8 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
   // 2. Check if this repo has been claimed (optional)
   const repoSettings = await getRepoSettingsByName(owner, repo);
 
-  // 3. Get bounties for this repo (by GitHub repo ID)
-  const bountiesData = await getBountiesByGithubRepoId(BigInt(githubRepo.id));
+  // 3. Get bounties for this repo (with submissions for "Claimed" status)
+  const bountiesData = await getRepoBountiesWithSubmissions(BigInt(githubRepo.id));
 
   // Build project info (minimal - just repo identifiers)
   const project: BountyProject = {
@@ -64,7 +56,6 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
   };
 
   // Transform bounties data
-  // BigInt fields are serialized to strings for JSON compatibility
   const bounties: Bounty[] = bountiesData.map((b) => ({
     id: b.id,
     network: b.network,
@@ -83,6 +74,30 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
     tokenAddress: b.tokenAddress,
     primaryFunderId: b.primaryFunderId,
     status: b.status as Bounty['status'],
+    // Map submissions needed for "Claimed" status
+    submissions: b.submissions.map((s) => ({
+      id: s.id,
+      userId: s.userId,
+      githubUserId: s.githubUserId?.toString() ?? null,
+      githubPrId: s.githubPrId?.toString() ?? null,
+      githubPrNumber: s.githubPrNumber,
+      githubPrUrl: s.githubPrUrl,
+      githubPrTitle: s.githubPrTitle,
+      status: s.status as SubmissionStatus,
+      funderApprovedAt: s.funderApprovedAt,
+      funderApprovedBy: s.funderApprovedBy,
+      ownerApprovedAt: s.ownerApprovedAt,
+      ownerApprovedBy: s.ownerApprovedBy,
+      rejectedAt: s.rejectedAt,
+      rejectedBy: s.rejectedBy,
+      rejectionNote: s.rejectionNote,
+      prMergedAt: s.prMergedAt,
+      prClosedAt: s.prClosedAt,
+      submittedAt: s.submittedAt,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+      submitter: { id: s.userId, name: null, image: null }, // Placeholder as we didn't join user
+    })),
     approvedAt: b.approvedAt,
     ownerApprovedAt: b.ownerApprovedAt,
     paidAt: b.paidAt,
@@ -97,17 +112,13 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
   const completedBounties = bounties.filter((b) => b.status === 'completed').length;
   const totalFunded = bounties
     .reduce((sum, b) => sum + (b.totalFunded ? BigInt(b.totalFunded) : BigInt(0)), BigInt(0))
-    .toString(); // Convert to string for JSON serialization
-
-  // Get recent bounties
-  const recentBounties = bounties.slice(0, 3);
+    .toString();
 
   // Check if current user can manage the repo settings
   const session = await getSession();
   const canManage = repoSettings && session?.user?.id === repoSettings.verifiedOwnerUserId;
 
   // Check if we should show the onboarding modal
-  // Show when: URL has ?onboarding=true OR repo is claimed by this user and onboarding not completed
   const isVerifiedOwner = repoSettings?.verifiedOwnerUserId === session?.user?.id;
   const showOnboarding =
     isVerifiedOwner &&
@@ -131,42 +142,26 @@ export default async function ProjectPage({ params, searchParams }: ProjectPageP
         />
       )}
 
-      <div className="container py-8">
-        <div className="mx-auto max-w-7xl">
-          {/* Full width header section */}
-          <RepoInfoHeader github={githubRepo} isClaimed={!!repoSettings} />
+      <div className="min-h-screen bg-background">
+        <div className="container max-w-5xl mx-auto px-4 sm:px-6">
+          {/* Header */}
+          <RepoHeader
+            github={githubRepo}
+            owner={owner}
+            repo={repo}
+            stats={{
+              totalFunded,
+              openBounties,
+              completedBounties,
+            }}
+            isClaimed={!!repoSettings}
+            canManage={!!canManage}
+            isLoggedIn={!!session?.user}
+          />
 
-          {/* Full width heading */}
-          <h2 className="mt-8 mb-4 text-xl font-semibold">Recent Bounties</h2>
-
-          {/* Two-column layout for bounties + stats */}
-          <div className="flex flex-col lg:flex-row gap-8">
-            {/* Left Column - Bounties */}
-            <div className="flex-1">
-              {recentBounties.length > 0 ? (
-                <div className="space-y-4">
-                  {recentBounties.map((bounty) => (
-                    <BountyCard key={bounty.id} bounty={bounty} />
-                  ))}
-                </div>
-              ) : (
-                <BountiesEmptyState isClaimed={!!repoSettings} />
-              )}
-            </div>
-
-            {/* Right Column - Sticky Stats */}
-            <aside className="lg:w-80 lg:sticky lg:top-8 lg:self-start">
-              <RepoStatsCard
-                owner={owner}
-                repo={repo}
-                totalFunded={totalFunded}
-                openBounties={openBounties}
-                completedBounties={completedBounties}
-                isClaimed={!!repoSettings}
-                canManage={!!canManage}
-                isLoggedIn={!!session?.user}
-              />
-            </aside>
+          <div className="mt-8">
+            {/* Main Content: Bounty List (Full Width) */}
+            <BountyList bounties={bounties} isClaimed={!!repoSettings} owner={owner} repo={repo} />
           </div>
         </div>
       </div>

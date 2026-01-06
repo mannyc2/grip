@@ -23,6 +23,8 @@ export interface GitHubOrganization {
   avatar_url: string;
   description: string | null;
   name: string | null; // Display name (optional)
+  html_url: string;
+  created_at: string;
 }
 
 export interface GitHubOrgMembership {

@@ -2,7 +2,7 @@ import { db } from '@/db';
 import { networkFilter } from '../network';
 import { accessKeys, pendingPayments } from '@/db/schema/business';
 import { member, passkey } from '@/db/schema/auth';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 // ============================================================================
 // ORGANIZATION WALLET
@@ -275,5 +275,76 @@ export async function getOrgMembersWithUsers(orgId: string) {
       },
     },
     orderBy: member.createdAt,
+  });
+}
+
+/**
+ * Get repositories with GRIP activity for an organization
+ *
+ * Returns:
+ * 1. Repos that have bounties created by this org OR bounties funded by this org
+ * 2. Repos that are owned by this org (matched by githubLogin) and have repo_settings (installed)
+ */
+export async function getOrgRepositories(orgId: string, githubLogin: string | null) {
+  const { bounties, repoSettings } = await import('@/db/schema/business');
+
+  // 1. Get repos with bounties linked to this org
+  const bountyRepos = await db
+    .select({
+      id: bounties.githubRepoId,
+      owner: bounties.githubOwner,
+      name: bounties.githubRepo,
+      bountyCount: sql<number>`count(${bounties.id})`.mapWith(Number),
+      totalFunded: sql<bigint>`sum(${bounties.totalFunded})`.mapWith(BigInt),
+    })
+    .from(bounties)
+    .where(and(networkFilter(bounties), eq(bounties.organizationId, orgId)))
+    .groupBy(bounties.githubRepoId, bounties.githubOwner, bounties.githubRepo);
+
+  // 2. Get repos owned by this org that have settings (installed)
+  // Only if we know the GitHub login
+  let installedRepos: typeof bountyRepos = [];
+  if (githubLogin) {
+    // We need to match column selection for union/merge
+    // Note: repo_settings doesn't store aggregate stats, so we zero them here
+    // We'll merge stats later if they exist in both lists
+    const installed = await db
+      .select({
+        id: repoSettings.githubRepoId,
+        owner: repoSettings.githubOwner,
+        name: repoSettings.githubRepo,
+        bountyCount: sql<number>`0`.mapWith(Number),
+        totalFunded: sql<bigint>`0`.mapWith(BigInt),
+      })
+      .from(repoSettings)
+      .where(eq(repoSettings.githubOwner, githubLogin));
+
+    // @ts-ignore - type compatibility of sql mapping
+    installedRepos = installed;
+  }
+
+  // Merge results
+  const repoMap = new Map<string, (typeof bountyRepos)[0]>();
+
+  // Add bounty repos first (they have stats)
+  for (const repo of bountyRepos) {
+    repoMap.set(repo.id.toString(), repo);
+  }
+
+  // Add/merge installed repos
+  for (const repo of installedRepos) {
+    const key = repo.id.toString();
+    if (!repoMap.has(key)) {
+      repoMap.set(key, repo);
+    }
+    // If it exists, we keep the one with stats (bountyRepos)
+    // Implicitly handled since we started with bountyRepos and only add if missing
+  }
+
+  return Array.from(repoMap.values()).sort((a, b) => {
+    // Sort by funded amount desc, then name
+    const diff = b.totalFunded - a.totalFunded;
+    if (diff !== 0n) return diff > 0n ? 1 : -1;
+    return a.name.localeCompare(b.name);
   });
 }

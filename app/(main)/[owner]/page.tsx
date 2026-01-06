@@ -1,5 +1,10 @@
 import { getBountyDataByGitHubId, getUserByName, getUserOrganizations } from '@/db/queries/users';
-import { getOrgBySlug, getOrgBountyData, getOrgMembersWithUsers } from '@/db/queries/organizations';
+import {
+  getOrgBySlug,
+  getOrgBountyData,
+  getOrgMembersWithUsers,
+  getOrgRepositories,
+} from '@/db/queries/organizations';
 import { getSession } from '@/lib/auth/auth-server';
 import {
   fetchGitHubUser,
@@ -11,6 +16,8 @@ import { getOrganization } from '@/lib/github/organizations';
 import { notFound } from 'next/navigation';
 import { UserProfile } from './_components/user-profile';
 import { OrgProfile } from './_components/org-profile';
+
+import { getSubmissionsByUser } from '@/db/queries/submissions';
 
 interface OwnerPageProps {
   params: Promise<{ owner: string }>;
@@ -57,7 +64,8 @@ export default async function OwnerPage({ params }: OwnerPageProps) {
     // Fetch BountyLane org data in parallel
     const [github, repos, bountyData, members] = await Promise.all([
       gripOrg.githubOrgLogin ? getOrganization(gripOrg.githubOrgLogin) : null,
-      gripOrg.githubOrgLogin ? fetchGitHubOrgRepositories(gripOrg.githubOrgLogin) : [],
+      // Use new query that aggregates bounty stats
+      getOrgRepositories(gripOrg.id, gripOrg.githubOrgLogin),
       getOrgBountyData(gripOrg.id),
       getOrgMembersWithUsers(gripOrg.id),
     ]);
@@ -107,8 +115,11 @@ export default async function OwnerPage({ params }: OwnerPageProps) {
     // Get org memberships only if user is signed up
     const organizations = bountyLaneUser ? await getUserOrganizations(bountyLaneUser.id) : [];
 
-    // Fetch repos for GitHub-only users
-    const repos = !bountyLaneUser ? await fetchGitHubUserRepositories(owner) : [];
+    // Get submissions if user is signed up
+    const userSubmissions = bountyLaneUser ? await getSubmissionsByUser(bountyLaneUser.id) : [];
+
+    // Fetch repos for all users (needed for RepoList metadata)
+    const repos = await fetchGitHubUserRepositories(owner, { sort: 'updated', perPage: 100 });
 
     const isOwnProfile = session?.user?.name === owner;
     const isLoggedIn = !!session?.user;
@@ -120,6 +131,7 @@ export default async function OwnerPage({ params }: OwnerPageProps) {
         bountyLaneUser={bountyLaneUser}
         bountyData={bountyData}
         organizations={organizations}
+        userSubmissions={userSubmissions}
         repos={repos}
         isOwnProfile={isOwnProfile}
         isLoggedIn={isLoggedIn}
@@ -130,8 +142,17 @@ export default async function OwnerPage({ params }: OwnerPageProps) {
   // 3. Try GitHub org (permissionless)
   const githubOrg = await getOrganization(owner);
   if (githubOrg) {
-    const repos = await fetchGitHubOrgRepositories(owner);
+    const githubRepos = await fetchGitHubOrgRepositories(owner);
     const isLoggedIn = !!session?.user;
+
+    // Map GitHub repos to OrgRepo format (no GRIP stats)
+    const repos = githubRepos.map((repo) => ({
+      id: BigInt(repo.id),
+      owner: repo.owner.login,
+      name: repo.name,
+      bountyCount: 0,
+      totalFunded: 0n,
+    }));
 
     return (
       <OrgProfile

@@ -2,9 +2,10 @@
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
+import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Input } from '@/components/ui/input';
 import { authClient } from '@/lib/auth/auth-client';
-import { AlertCircle, Loader2, Lock, Search } from 'lucide-react';
+import { AlertCircle, Building2, Loader2, Lock, Search } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 /**
@@ -159,14 +160,16 @@ export function GitHubOrgPicker({ onSelect, onBack }: GitHubOrgPickerProps) {
   if (orgs.length === 0) {
     return (
       <div className="space-y-4">
-        <div className="py-8 text-center">
-          <p className="body-base text-muted-foreground">
-            No GitHub organizations found where you're an admin.
-          </p>
-          <p className="caption text-muted-foreground mt-2">
-            Only organization admins can link GitHub orgs to GRIP.
-          </p>
-        </div>
+        <Empty className="py-8">
+          <EmptyMedia variant="icon">
+            <Building2 />
+          </EmptyMedia>
+          <EmptyTitle>No GitHub organizations found</EmptyTitle>
+          <EmptyDescription>
+            No GitHub organizations found where you&apos;re an admin. Only organization admins can
+            link GitHub orgs to GRIP.
+          </EmptyDescription>
+        </Empty>
         <Button variant="outline" onClick={onBack} className="w-full">
           Go Back
         </Button>

@@ -1,17 +1,15 @@
 'use client';
 
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import type { Notification } from '@/lib/types';
-import { NOTIFICATION_ICONS } from '@/lib/utils';
-import { Bell } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { useSession } from '@/lib/auth/auth-client';
+import { Bell, Inbox } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -46,6 +44,7 @@ function formatTimeAgo(dateString: string): string {
  * - Clicking notification marks as read + navigates
  */
 export function NotificationDropdown() {
+  const { data: session } = useSession();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -64,12 +63,16 @@ export function NotificationDropdown() {
     }
   }, []);
 
-  // Initial fetch + polling
+  // Initial fetch + polling (only when logged in)
   useEffect(() => {
+    if (!session?.user) return;
     fetchNotifications();
     const interval = setInterval(fetchNotifications, 15_000); // 15 seconds
     return () => clearInterval(interval);
-  }, [fetchNotifications]);
+  }, [fetchNotifications, session?.user]);
+
+  // Only show when logged in
+  if (!session?.user) return null;
 
   // Mark as read when clicked
   const handleNotificationClick = async (notificationId: string) => {
@@ -102,87 +105,77 @@ export function NotificationDropdown() {
 
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen}>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="sm" className="relative" />}>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" className="relative h-9 w-9 rounded-full" />}
+      >
         <Bell className="h-4 w-4" />
         {unreadCount > 0 && (
-          <Badge
-            variant="destructive"
-            className="absolute -top-1 -right-1 h-5 min-w-[20px] flex items-center justify-center p-0 text-xs"
-          >
+          <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-xs font-medium text-destructive-foreground">
             {unreadCount > 99 ? '99+' : unreadCount}
-          </Badge>
+          </span>
         )}
       </DropdownMenuTrigger>
 
-      <DropdownMenuContent align="end" className="w-96">
+      <DropdownMenuContent align="end" className="w-80 p-0">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-border">
-          <h3 className="font-semibold">Notifications</h3>
+        <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+          <span className="text-sm font-medium">Notifications</span>
           {unreadCount > 0 && (
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
+              type="button"
               onClick={handleMarkAllAsRead}
-              className="text-xs text-muted-foreground hover:text-foreground"
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               Mark all read
-            </Button>
+            </button>
           )}
         </div>
 
         {/* Notifications List */}
         {notifications.length === 0 ? (
-          <div className="p-8 text-center text-muted-foreground text-sm">No notifications yet</div>
+          <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+            <Inbox className="h-8 w-8 mb-2 opacity-50" />
+            <span className="text-sm">No notifications</span>
+          </div>
         ) : (
-          <>
+          <div className="max-h-80 overflow-y-auto">
             {notifications.map((notification) => (
-              <DropdownMenuItem
+              <Link
                 key={notification.id}
-                render={
-                  <Link
-                    href={notification.linkUrl}
-                    onClick={() => handleNotificationClick(notification.id)}
-                    className={`flex items-start gap-3 p-4 cursor-pointer ${
-                      !notification.readAt ? 'bg-accent/50' : ''
-                    }`}
-                  />
-                }
+                href={notification.linkUrl}
+                onClick={() => handleNotificationClick(notification.id)}
+                className={cn(
+                  'flex items-start gap-3 px-3 py-2.5 hover:bg-muted/50 transition-colors border-b border-border/50 last:border-0',
+                  !notification.readAt && 'bg-accent/30'
+                )}
               >
-                {/* Icon */}
-                <span className="text-2xl shrink-0">{NOTIFICATION_ICONS[notification.type]}</span>
-
-                {/* Content */}
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium leading-tight">{notification.title}</p>
-                  <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
+                  <p className="text-sm font-medium leading-snug line-clamp-1">
+                    {notification.title}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">
                     {notification.message}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-1">
+                  <p className="text-xs text-muted-foreground/70 mt-1">
                     {formatTimeAgo(notification.createdAt)}
                   </p>
                 </div>
-
-                {/* Unread indicator */}
                 {!notification.readAt && (
-                  <div className="w-2 h-2 rounded-full bg-primary shrink-0 mt-1" />
+                  <div className="w-1.5 h-1.5 rounded-full bg-primary shrink-0 mt-1.5" />
                 )}
-              </DropdownMenuItem>
+              </Link>
             ))}
+          </div>
+        )}
 
-            <DropdownMenuSeparator />
-
-            {/* View All Link */}
-            <DropdownMenuItem
-              render={
-                <Link
-                  href="/notifications"
-                  className="p-3 text-center text-sm text-primary hover:text-primary/80 cursor-pointer"
-                />
-              }
-            >
-              View all notifications →
-            </DropdownMenuItem>
-          </>
+        {/* Footer */}
+        {notifications.length > 0 && (
+          <Link
+            href="/notifications"
+            className="block px-3 py-2 text-center text-xs text-muted-foreground hover:text-foreground border-t border-border transition-colors"
+          >
+            View all
+          </Link>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

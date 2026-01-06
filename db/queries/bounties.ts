@@ -1,4 +1,4 @@
-import { bounties, bountyFunders, db, repoSettings, submissions, user } from '@/db';
+import { bounties, bountyFunders, db, passkey, repoSettings, submissions, user } from '@/db';
 import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import { getNetworkForInsert, networkFilter } from '../network';
 
@@ -259,6 +259,17 @@ export async function getOpenBounties(filters?: BountyFilters) {
     conditions.push(sql`${bounties.totalFunded} <= ${filters.maxAmount}`);
   }
 
+  if (filters?.labels && filters.labels.length > 0) {
+    // Check if labels JSONB array contains ANY of the filtered labels
+    // We construct a SQL condition: labels @> '[{"name": "label1"}]' OR labels @> '[{"name": "label2"}]'
+    const labelConditions = filters.labels.map(
+      (label) => sql`${bounties.labels} @> ${JSON.stringify([{ name: label }])}`
+    );
+    if (labelConditions.length > 0) {
+      conditions.push(sql`(${sql.join(labelConditions, sql` OR `)})`);
+    }
+  }
+
   const query = db
     .select({
       bounty: bounties,
@@ -387,6 +398,9 @@ export type SortOption = 'amount' | 'newest' | 'oldest';
 export async function getAllBounties(options?: {
   status?: BountyStatus | BountyStatus[];
   sort?: SortOption;
+  minAmount?: bigint;
+  maxAmount?: bigint;
+  labels?: string[];
   limit?: number;
   offset?: number;
 }) {
@@ -398,6 +412,23 @@ export async function getAllBounties(options?: {
       conditions.push(inArray(bounties.status, statusFilter));
     } else {
       conditions.push(eq(bounties.status, statusFilter));
+    }
+  }
+
+  if (options?.minAmount !== undefined) {
+    conditions.push(sql`${bounties.totalFunded} >= ${options.minAmount}`);
+  }
+
+  if (options?.maxAmount !== undefined) {
+    conditions.push(sql`${bounties.totalFunded} <= ${options.maxAmount}`);
+  }
+
+  if (options?.labels && options.labels.length > 0) {
+    const labelConditions = options.labels.map(
+      (label) => sql`${bounties.labels} @> ${JSON.stringify([{ name: label }])}`
+    );
+    if (labelConditions.length > 0) {
+      conditions.push(sql`(${sql.join(labelConditions, sql` OR `)})`);
     }
   }
 
@@ -710,4 +741,301 @@ export async function getCommittedBalanceByRepoId(githubRepoId: bigint | string)
     .where(and(networkFilter(bounties), eq(bounties.githubRepoId, repoIdBigInt)));
 
   return result?.committed ?? BigInt(0);
+}
+
+export type OnboardingStatus = {
+  githubConnected: boolean;
+  walletCreated: boolean;
+  repoConnected: boolean;
+  firstBountyFunded: boolean;
+  firstBountyClaimed: boolean;
+  isOrgMember: boolean;
+  completedSteps: number;
+  totalSteps: number;
+  allComplete: boolean;
+};
+
+export async function getUserOnboardingStatus(userId: string): Promise<OnboardingStatus> {
+  // Import member schema inline to avoid circular dependency
+  const { member } = await import('@/db/schema/auth');
+
+  const [walletCount, repoCount, fundedCount, claimedCount, memberCount] = await Promise.all([
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(passkey)
+      .where(eq(passkey.userId, userId)),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(repoSettings)
+      .where(eq(repoSettings.verifiedOwnerUserId, userId)),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(bounties)
+      .where(and(networkFilter(bounties), eq(bounties.primaryFunderId, userId))),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(submissions)
+      .innerJoin(bounties, eq(submissions.bountyId, bounties.id))
+      .where(and(networkFilter(bounties), eq(submissions.userId, userId))),
+    db.select({ count: sql<number>`count(*)::int` }).from(member).where(eq(member.userId, userId)),
+  ]);
+
+  const status = {
+    githubConnected: true, // Implied by session
+    walletCreated: (walletCount[0]?.count ?? 0) > 0,
+    repoConnected: (repoCount[0]?.count ?? 0) > 0,
+    firstBountyFunded: (fundedCount[0]?.count ?? 0) > 0,
+    firstBountyClaimed: (claimedCount[0]?.count ?? 0) > 0,
+    isOrgMember: (memberCount[0]?.count ?? 0) > 0,
+  };
+
+  // Determine which path user is on to calculate completion
+  // Core steps for everyone: GitHub + Wallet
+  let completedCount = 0;
+  const totalSteps = 4; // Default Funder path length
+
+  // Base steps
+  if (status.githubConnected) completedCount++;
+  if (status.walletCreated || status.isOrgMember) completedCount++;
+
+  // Path specific
+  // If user has claimed a bounty, they are certainly a contributor
+  // If user has connected repo or funded, they are a funder
+  // If org member, they skip wallet/repo steps but usually need to fund
+  const isFunderActivity = status.repoConnected || status.firstBountyFunded || status.isOrgMember;
+  const isContributorActivity = status.firstBountyClaimed;
+
+  // We'll calculate a generic completedSteps for the UI, but relying on "allComplete" for the logic
+  if (status.repoConnected) completedCount++;
+  if (status.firstBountyFunded) completedCount++;
+
+  // NOTE: This logic is slightly fuzzy because we don't know intent yet.
+  // The UI will handle the display logic.
+  // For 'allComplete', we check if EITHER path is done.
+
+  const funderComplete =
+    status.githubConnected &&
+    (status.walletCreated || status.isOrgMember) &&
+    (status.repoConnected || status.isOrgMember) &&
+    status.firstBountyFunded;
+
+  const contributorComplete =
+    status.githubConnected &&
+    (status.walletCreated || status.isOrgMember) &&
+    status.firstBountyClaimed;
+
+  return {
+    ...status,
+    completedSteps: completedCount, // This is just an approximation for now, UI will refine
+    totalSteps,
+    allComplete: funderComplete || contributorComplete,
+  };
+}
+
+export type ActiveRepo = {
+  githubRepoId: string;
+  githubOwner: string;
+  githubRepo: string;
+  githubFullName: string;
+  openCount: number;
+  totalFunded: string;
+  lastActivity: {
+    description: string;
+    date: Date;
+  } | null;
+};
+
+export async function getUserActiveRepos(userId: string, limit = 5): Promise<ActiveRepo[]> {
+  // 1. Find relevant repos from 3 sources:
+  // - Funded bounties (created by user)
+  // - Submissions (claimed by user)
+  // - Owned repos (repo_settings)
+
+  // We fetch a bit more than limit to ensure we have enough unique repos after merging
+  const fetchLimit = limit * 2;
+
+  const [fundedRepos, submittedRepos, ownedRepos] = await Promise.all([
+    // Funded
+    db
+      .select({
+        id: bounties.githubRepoId,
+        owner: bounties.githubOwner,
+        repo: bounties.githubRepo,
+        fullName: bounties.githubFullName,
+        date: bounties.createdAt,
+        bountyId: bounties.id,
+        bountyIssue: bounties.githubIssueNumber,
+      })
+      .from(bounties)
+      .where(and(networkFilter(bounties), eq(bounties.primaryFunderId, userId)))
+      .orderBy(desc(bounties.createdAt))
+      .limit(fetchLimit),
+
+    // Submitted - join bounties to get repo info
+    db
+      .select({
+        id: bounties.githubRepoId,
+        owner: bounties.githubOwner,
+        repo: bounties.githubRepo,
+        fullName: bounties.githubFullName,
+        date: submissions.createdAt,
+        bountyId: bounties.id,
+        bountyIssue: bounties.githubIssueNumber,
+      })
+      .from(submissions)
+      .innerJoin(bounties, eq(submissions.bountyId, bounties.id))
+      .where(and(networkFilter(bounties), eq(submissions.userId, userId)))
+      .orderBy(desc(submissions.createdAt))
+      .limit(fetchLimit),
+
+    // Owned
+    db
+      .select({
+        id: repoSettings.githubRepoId,
+        owner: repoSettings.githubOwner,
+        repo: repoSettings.githubRepo,
+        fullName: sql<string>`${repoSettings.githubOwner} || '/' || ${repoSettings.githubRepo}`,
+        date: repoSettings.verifiedAt,
+      })
+      .from(repoSettings)
+      .where(eq(repoSettings.verifiedOwnerUserId, userId))
+      .orderBy(desc(repoSettings.verifiedAt))
+      .limit(fetchLimit),
+  ]);
+
+  // 2. Merge and sort by date to get top unique repos
+  const activityMap = new Map<
+    string,
+    {
+      id: bigint;
+      owner: string;
+      repo: string;
+      fullName: string;
+      lastDate: Date;
+      description: string;
+    }
+  >();
+
+  // Process funded
+  for (const item of fundedRepos) {
+    const idStr = item.id.toString();
+    // Prioritize newer activity
+    if (!activityMap.has(idStr) || new Date(item.date!) > activityMap.get(idStr)!.lastDate) {
+      activityMap.set(idStr, {
+        id: item.id,
+        owner: item.owner,
+        repo: item.repo,
+        fullName: item.fullName,
+        lastDate: new Date(item.date!),
+        description: `You funded #${item.bountyIssue}`,
+      });
+    }
+  }
+
+  // Process submissions
+  for (const item of submittedRepos) {
+    const idStr = item.id.toString();
+    if (!activityMap.has(idStr) || new Date(item.date!) > activityMap.get(idStr)!.lastDate) {
+      activityMap.set(idStr, {
+        id: item.id,
+        owner: item.owner,
+        repo: item.repo,
+        fullName: item.fullName,
+        lastDate: new Date(item.date!),
+        description: `You claimed #${item.bountyIssue}`,
+      });
+    }
+  }
+
+  // Process owned
+  for (const item of ownedRepos) {
+    const idStr = item.id.toString();
+    // If we already have activity (funding/claiming), prefer that description over just "connected"
+    // unless connection is NEWER (unlikely for established users, but possible)
+    if (!activityMap.has(idStr)) {
+      activityMap.set(idStr, {
+        id: item.id,
+        owner: item.owner,
+        repo: item.repo,
+        fullName: item.fullName,
+        lastDate: new Date(item.date!),
+        description: 'Connected repository',
+      });
+    }
+  }
+
+  // Convert to array and sort
+  const sortedRepos = Array.from(activityMap.values())
+    .sort((a, b) => b.lastDate.getTime() - a.lastDate.getTime())
+    .slice(0, limit);
+
+  // 3. Enrich with stats (open count, total value)
+  // We can do this with a single aggregation query for these specific repo IDs
+  if (sortedRepos.length === 0) return [];
+
+  const repoIds = sortedRepos.map((r) => r.id);
+
+  const stats = await db
+    .select({
+      id: bounties.githubRepoId,
+      openCount: sql<number>`count(*) filter (where ${bounties.status} = 'open')::int`,
+      totalFunded: sql<bigint>`coalesce(sum(${bounties.totalFunded}) filter (where ${bounties.status} = 'open'), 0)::bigint`,
+    })
+    .from(bounties)
+    .where(and(networkFilter(bounties), inArray(bounties.githubRepoId, repoIds)))
+    .groupBy(bounties.githubRepoId);
+
+  const statsMap = new Map(stats.map((s) => [s.id.toString(), s]));
+
+  return sortedRepos.map((repo) => {
+    const s = statsMap.get(repo.id.toString());
+    return {
+      githubRepoId: repo.id.toString(),
+      githubOwner: repo.owner,
+      githubRepo: repo.repo,
+      githubFullName: repo.fullName,
+      openCount: s?.openCount ?? 0,
+      totalFunded: (s?.totalFunded ?? BigInt(0)).toString(),
+      lastActivity: {
+        description: repo.description,
+        date: repo.lastDate,
+      },
+    };
+  });
+}
+
+/**
+ * Get bounties for a repo including their submissions
+ *
+ * Used by the repo page to show "Claimed" status (Open + Submissions)
+ */
+export async function getRepoBountiesWithSubmissions(githubRepoId: bigint | string) {
+  const repoId = typeof githubRepoId === 'string' ? BigInt(githubRepoId) : githubRepoId;
+
+  const rows = await db
+    .select({
+      bounty: bounties,
+      submission: submissions,
+    })
+    .from(bounties)
+    .leftJoin(submissions, eq(bounties.id, submissions.bountyId))
+    .where(and(networkFilter(bounties), eq(bounties.githubRepoId, repoId)))
+    .orderBy(desc(bounties.createdAt));
+
+  // Deduplicate and nest submissions
+  const map = new Map<
+    string,
+    typeof bounties.$inferSelect & { submissions: (typeof submissions.$inferSelect)[] }
+  >();
+
+  for (const row of rows) {
+    if (!map.has(row.bounty.id)) {
+      map.set(row.bounty.id, { ...row.bounty, submissions: [] });
+    }
+    if (row.submission) {
+      map.get(row.bounty.id)!.submissions.push(row.submission);
+    }
+  }
+
+  return Array.from(map.values());
 }

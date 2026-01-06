@@ -1,167 +1,135 @@
+import { getSession } from '@/lib/auth/auth-server';
 import {
+  getAllBounties,
   getBountiesCreatedByUser,
   getCompletedBountiesByUser,
+  getUserActiveRepos,
   getUserActiveSubmissions,
-  getUserDashboardStats,
+  getUserOnboardingStatus,
 } from '@/db/queries/bounties';
-import { getSession } from '@/lib/auth/auth-server';
-import type { Bounty } from '@/lib/types';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
-import { DashboardClient } from './_components/dashboard-client';
+import { cookies } from 'next/headers';
+import { ActivityFeed } from '@/components/dashboard/activity-feed';
+import { QuickActions } from '@/components/dashboard/quick-actions';
+import { Suggestions } from '@/components/dashboard/suggestions';
+import { Onboarding } from '@/components/dashboard/onboarding';
+import { ActiveRepos } from '@/components/dashboard/active-repos';
+import type { Bounty } from '@/lib/types';
+import { cn } from '@/lib/utils';
 
 export const metadata: Metadata = {
   title: 'Dashboard',
-  description: "Track bounties you've created, claimed, or are watching",
+  description: 'Your command center on GRIP.',
 };
 
-/**
- * Dashboard Page - Personal bounty hub
- *
- * Server component with SSR data fetching.
- * Requires authentication - redirects to login if not signed in.
- *
- * Tabs:
- * - Created: Bounties user funded (primaryFunderId)
- * - Claimed: Active submissions (pending/approved/merged)
- * - Watching: Placeholder for future feature
- * - Completed: Bounties where user was paid
- */
 export default async function DashboardPage() {
   const session = await getSession();
 
   if (!session?.user) {
-    redirect('/login?redirect=/dashboard');
+    redirect('/login');
   }
 
   const userId = session.user.id;
 
-  // Fetch all data in parallel for performance
-  const [stats, createdData, claimedData, completedData] = await Promise.all([
-    getUserDashboardStats(userId),
-    getBountiesCreatedByUser(userId),
-    getUserActiveSubmissions(userId),
-    getCompletedBountiesByUser(userId),
+  // Parallel data fetching
+  const [
+    onboardingStatus,
+    activeRepos,
+    createdBounties,
+    activeSubmissions,
+    completedBounties,
+    // Fetch some generic bounties for suggestions fallback
+    genericSuggestions,
+  ] = await Promise.all([
+    getUserOnboardingStatus(userId),
+    getUserActiveRepos(userId, 5),
+    getBountiesCreatedByUser(userId, { limit: 5 }),
+    getUserActiveSubmissions(userId, { limit: 5 }),
+    getCompletedBountiesByUser(userId, { limit: 5 }),
+    getAllBounties({ limit: 3, status: 'open', sort: 'amount' }),
   ]);
 
-  // Transform created bounties for client (serialize BigInt)
-  const created = createdData.map((item) => ({
-    bounty: transformBounty(item.bounty),
-    submissionCount: item.submissionCount,
-    activeSubmissionCount: item.activeSubmissionCount,
-  }));
-
-  // Transform claimed bounties for client
-  const claimed = claimedData.map((item) => ({
-    submission: transformSubmission(item.submission),
-    bounty: transformBounty(item.bounty),
-  }));
-
-  // Transform completed bounties for client
-  const completed = completedData.map((item) => ({
-    submission: transformSubmission(item.submission),
-    bounty: transformBounty(item.bounty),
-    payout: item.payout
-      ? {
-          id: item.payout.id,
-          amount: item.payout.amount.toString(),
-          confirmedAt: item.payout.confirmedAt,
-          txHash: item.payout.txHash,
-        }
-      : null,
-  }));
-
-  return (
-    <DashboardClient
-      stats={stats}
-      created={created}
-      claimed={claimed}
-      completed={completed}
-      userName={session.user.name}
-    />
-  );
-}
-
-/**
- * Transform bounty from DB format to client format
- * Serializes BigInt fields to strings for JSON compatibility
- */
-function transformBounty(bounty: {
-  id: string;
-  network: string;
-  repoSettingsId: bigint | null;
-  githubRepoId: bigint;
-  githubOwner: string;
-  githubRepo: string;
-  githubFullName: string;
-  githubIssueNumber: number;
-  githubIssueId: bigint;
-  githubIssueAuthorId: bigint | null;
-  title: string;
-  body: string | null;
-  labels: unknown;
-  totalFunded: bigint;
-  tokenAddress: string;
-  primaryFunderId: string | null;
-  organizationId: string | null;
-  status: string;
-  approvedAt: string | null;
-  ownerApprovedAt: string | null;
-  paidAt: string | null;
-  cancelledAt: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
-}): Bounty {
-  return {
+  // Transform generic suggestions to Bounty type
+  const suggestedBounties: Bounty[] = genericSuggestions.map(({ bounty }) => ({
     ...bounty,
-    totalFunded: bounty.totalFunded.toString(),
+    id: bounty.id,
+    network: bounty.network,
     githubRepoId: bounty.githubRepoId.toString(),
+    githubOwner: bounty.githubOwner,
+    githubRepo: bounty.githubRepo,
+    githubFullName: bounty.githubFullName,
+    githubIssueNumber: bounty.githubIssueNumber,
     githubIssueId: bounty.githubIssueId.toString(),
     githubIssueAuthorId: bounty.githubIssueAuthorId?.toString() ?? null,
-    status: bounty.status as Bounty['status'],
-    labels: bounty.labels as Bounty['labels'],
-    createdAt: bounty.createdAt ?? new Date().toISOString(),
-    updatedAt: bounty.updatedAt ?? new Date().toISOString(),
     githubIssueUrl: `https://github.com/${bounty.githubFullName}/issues/${bounty.githubIssueNumber}`,
+    title: bounty.title,
+    body: bounty.body,
+    labels: bounty.labels,
+    totalFunded: bounty.totalFunded.toString(),
+    tokenAddress: bounty.tokenAddress,
+    primaryFunderId: bounty.primaryFunderId,
+    status: bounty.status as Bounty['status'],
+    approvedAt: bounty.approvedAt,
+    ownerApprovedAt: bounty.ownerApprovedAt,
+    paidAt: bounty.paidAt,
+    cancelledAt: bounty.cancelledAt,
+    createdAt: bounty.createdAt,
+    updatedAt: bounty.updatedAt,
     project: {
       githubOwner: bounty.githubOwner,
       githubRepo: bounty.githubRepo,
       githubFullName: bounty.githubFullName,
     },
-  };
-}
+  }));
 
-/**
- * Transform submission from DB format to client format
- */
-function transformSubmission(submission: {
-  id: string;
-  bountyId: string;
-  userId: string;
-  githubUserId: bigint | null;
-  githubPrId: bigint | null;
-  githubPrNumber: number | null;
-  githubPrUrl: string | null;
-  githubPrTitle: string | null;
-  status: string;
-  submittedAt: string | null;
-  funderApprovedAt: string | null;
-  funderApprovedBy: string | null;
-  ownerApprovedAt: string | null;
-  ownerApprovedBy: string | null;
-  rejectedAt: string | null;
-  rejectedBy: string | null;
-  rejectionNote: string | null;
-  prMergedAt: string | null;
-  prClosedAt: string | null;
-  createdAt: string | null;
-  updatedAt: string | null;
-}) {
-  return {
-    ...submission,
-    githubUserId: submission.githubUserId?.toString() ?? null,
-    githubPrId: submission.githubPrId?.toString() ?? null,
-    createdAt: submission.createdAt ?? new Date().toISOString(),
-    updatedAt: submission.updatedAt ?? new Date().toISOString(),
-  };
+  // TODO: Ideally we would fetch personalized suggestions based on activeRepos here
+  // For now, we use generic high-value bounties
+
+  return (
+    <main className="min-h-screen bg-background pb-12">
+      {/* Header */}
+      <div className="border-b border-border pb-8 pt-10">
+        <div className="container">
+          <h1 className="text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="text-muted-foreground">
+            Welcome back, {session.user.name?.split(' ')[0] ?? 'Contributor'}.
+          </p>
+        </div>
+      </div>
+
+      <div className="container py-8 grid gap-6 grid-cols-1 lg:grid-cols-4">
+        {/* Row 1: Onboarding/Active (3/4) & Quick Actions (1/4) */}
+        <div className="lg:col-span-3 h-full">
+          {onboardingStatus.allComplete || (await cookies()).get('grip-onboarding-skipped') ? (
+            <ActiveRepos repos={activeRepos} />
+          ) : (
+            <Onboarding status={onboardingStatus} />
+          )}
+        </div>
+
+        <div className="lg:col-span-1 h-full">
+          <QuickActions />
+        </div>
+
+        {/* Row 2: Activity Feed (1/2) & Suggestions (1/2) */}
+        {/* Note: In a 4-col grid, 1/2 width is 2 cols */}
+        <div className="lg:col-span-2 h-full">
+          <ActivityFeed
+            created={createdBounties}
+            claimed={activeSubmissions}
+            completed={completedBounties}
+          />
+        </div>
+
+        <div className="lg:col-span-2 h-full">
+          <Suggestions
+            bounties={suggestedBounties}
+            title="Suggestions"
+            subtitle={activeRepos.length > 0 ? 'Based on your activity' : 'Popular bounties'}
+          />
+        </div>
+      </div>
+    </main>
+  );
 }
