@@ -13,10 +13,9 @@
  * - Use a single passkey for both auth and transaction signing
  */
 
-import { tempo } from 'tempo.ts/chains';
-import { KeyManager, webAuthn } from 'tempo.ts/wagmi';
+import { tempoTestnet } from 'viem/chains';
 import { http, createConfig } from 'wagmi';
-import { TEMPO_RPC_URL } from './tempo/constants';
+import { KeyManager, webAuthn } from 'wagmi/tempo';
 
 /**
  * Wagmi configuration with Tempo's webAuthn connector
@@ -34,7 +33,7 @@ export const config = createConfig({
   chains: [
     // Fee token not specified - protocol handles fallback chain:
     // Transaction → Account preference → Contract → pathUSD
-    tempo(),
+    tempoTestnet,
   ],
   connectors: [
     webAuthn({
@@ -42,11 +41,10 @@ export const config = createConfig({
       // instead of localStorage (which would be lost on logout/device change)
       keyManager: KeyManager.http(
         {
-          // Better Auth plugin endpoints for KeyManager
-          // SDK expects these specific endpoint properties with :credentialId placeholder
-          // The SDK will replace :credentialId with the actual credential ID
-          getPublicKey: '/api/auth/tempo/keymanager?credentialId=:credentialId',
-          setPublicKey: '/api/auth/tempo/keymanager?credentialId=:credentialId',
+          // Better-auth tempo plugin endpoints with path params
+          // SDK replaces :credentialId with the actual credential ID
+          getPublicKey: '/api/auth/tempo/keymanager/:credentialId',
+          setPublicKey: '/api/auth/tempo/keymanager/:credentialId',
         },
         {
           // CRITICAL: Include credentials (cookies) with requests
@@ -65,7 +63,9 @@ export const config = createConfig({
   // GRIP uses treasury passkeys only, not external wallets
   multiInjectedProviderDiscovery: false,
   transports: {
-    [tempo().id]: http(TEMPO_RPC_URL),
+    [tempoTestnet.id]: http(
+      process.env.NEXT_PUBLIC_TEMPO_RPC_URL ?? tempoTestnet.rpcUrls.default.http[0]
+    ),
   },
 });
 

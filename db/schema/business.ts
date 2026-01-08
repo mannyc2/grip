@@ -97,7 +97,7 @@ export const submissionStatuses = [
 ] as const;
 export type SubmissionStatus = (typeof submissionStatuses)[number];
 
-export const payoutStatuses = ['pending', 'awaiting_release', 'confirmed', 'failed'] as const;
+export const payoutStatuses = ['pending', 'confirmed', 'failed'] as const;
 export type PayoutStatus = (typeof payoutStatuses)[number];
 
 export const paymentTypes = ['bounty', 'direct'] as const;

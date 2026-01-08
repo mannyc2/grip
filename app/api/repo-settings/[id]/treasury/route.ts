@@ -3,6 +3,7 @@ import { getCommittedBalanceByRepoId } from '@/db/queries/bounties';
 import { getRepoSettingsByGithubRepoId, isUserRepoOwner } from '@/db/queries/repo-settings';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { TEMPO_TOKENS } from '@/lib/tempo/constants';
+import { getTokenMetadata } from '@/lib/tempo/tokens';
 import { eq } from 'drizzle-orm';
 import { type NextRequest, NextResponse } from 'next/server';
 import { formatUnits } from 'viem';
@@ -68,7 +69,10 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     const treasuryPasskey = ownerPasskeys[0];
 
     const tokenAddress = TEMPO_TOKENS.USDC;
-    const committedBalance = await getCommittedBalanceByRepoId(BigInt(githubRepoId));
+    const [committedBalance, metadata] = await Promise.all([
+      getCommittedBalanceByRepoId(BigInt(githubRepoId)),
+      getTokenMetadata(tokenAddress),
+    ]);
 
     return NextResponse.json({
       configured: true,
@@ -76,11 +80,11 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       credentialId: treasuryPasskey.credentialID,
       committed: {
         raw: committedBalance.toString(),
-        formatted: formatUnits(committedBalance, 6),
+        formatted: formatUnits(committedBalance, metadata.decimals),
       },
       tokenAddress,
-      tokenDecimals: 6,
-      tokenSymbol: 'USDC',
+      tokenDecimals: metadata.decimals,
+      tokenSymbol: metadata.symbol,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'Unauthorized') {

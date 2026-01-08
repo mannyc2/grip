@@ -1,6 +1,6 @@
 'use client';
 
-import { PasskeyOperationContent } from '@/components/passkey/passkey-operation-content';
+import { PasskeyOperationContent } from '@/components/tempo/passkey-operation-content';
 import { Button } from '@/components/ui/button';
 import { DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -15,7 +15,7 @@ import {
 } from '@/lib/webauthn';
 import { ArrowLeft, ArrowRight, CheckCircle2, Hand, Zap } from 'lucide-react';
 import { useState } from 'react';
-import { KeyAuthorization } from 'tempo.ts/ox';
+import { KeyAuthorization } from 'ox/tempo';
 import { useConnect, useConnections, useConnectors, useSignMessage } from 'wagmi';
 
 type PayoutMode = 'auto' | 'manual';

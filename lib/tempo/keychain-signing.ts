@@ -15,9 +15,9 @@
  * 6. Serialize signed tx with SDK
  */
 'use server';
-import { turnkey } from '@/lib/turnkey/client';
-import { SignatureEnvelope } from 'tempo.ts/ox';
-import { Transaction } from 'tempo.ts/viem';
+import { turnkey } from '@/lib/turnkey';
+import { SignatureEnvelope } from 'ox/tempo';
+import { Transaction } from 'viem/tempo';
 import { keccak256 } from 'viem';
 import { tempoClient } from './client';
 
@@ -147,9 +147,9 @@ export async function signTransactionWithAccessKey(params: {
  * Broadcast signed transaction to Tempo RPC
  */
 export async function broadcastTransaction(signedTx: `0x${string}`): Promise<`0x${string}`> {
-  const TEMPO_RPC_URL = process.env.TEMPO_RPC_URL ?? 'https://rpc.testnet.tempo.xyz';
+  const rpcUrl = process.env.TEMPO_RPC_URL ?? tempoClient.chain.rpcUrls.default.http[0];
 
-  const response = await fetch(TEMPO_RPC_URL, {
+  const response = await fetch(rpcUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

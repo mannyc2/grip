@@ -1,19 +1,12 @@
-import { db } from '@/db';
-import { getNetworkForInsert } from '@/db/network';
-import { getBountyById } from '@/db/queries/bounties';
-import { isOrgMember, validateOrgSpending, getOrgWalletAddress } from '@/db/queries/organizations';
+import { isOrgMember, validateOrgSpending } from '@/db/queries/organizations';
 import {
-  getPayoutById,
   getPayoutWithDetails,
   markPayoutConfirmed,
   markPayoutFailed,
   updatePayoutStatus,
 } from '@/db/queries/payouts';
-import { getSubmissionById } from '@/db/queries/submissions';
-import { getUserById } from '@/db/queries/users';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { notifyPaymentReceived } from '@/lib/notifications';
-import { buildPayoutTransaction } from '@/lib/tempo';
 import { handleRouteError, validateBody } from '@/app/api/_lib';
 import { payoutActionSchema } from '@/app/api/_lib/schemas';
 import type { NextRequest } from 'next/server';
@@ -70,9 +63,7 @@ export async function GET(_request: NextRequest, ctx: RouteContext<'/api/payment
 /**
  * POST /api/payments/payouts/[id]
  *
- * Payout actions:
- * - action: 'confirm' - Confirm a payout transaction after broadcast
- * - action: 'release' - Prepare org payment release (returns tx params for signing)
+ * Confirm a payout transaction after broadcast.
  */
 export async function POST(request: NextRequest, ctx: RouteContext<'/api/payments/payouts/[id]'>) {
   try {
@@ -80,10 +71,7 @@ export async function POST(request: NextRequest, ctx: RouteContext<'/api/payment
     const { id: payoutId } = await ctx.params;
     const body = await validateBody(request, payoutActionSchema);
 
-    if (body.action === 'confirm') {
-      return handleConfirm(payoutId, session, body);
-    }
-    return handleRelease(payoutId, session);
+    return handleConfirm(payoutId, session, body);
   } catch (error) {
     return handleRouteError(error, 'processing payout action');
   }
@@ -133,12 +121,8 @@ async function handleConfirm(
     );
   }
 
-  // Status validation
-  const allowedStatuses = payout.payerOrganizationId
-    ? ['awaiting_release', 'pending']
-    : ['pending'];
-
-  if (!payout.status || !allowedStatuses.includes(payout.status)) {
+  // Status validation - only pending payouts can be confirmed
+  if (payout.status !== 'pending') {
     return Response.json(
       { error: `Cannot confirm payout in ${payout.status} status` },
       { status: 400 }
@@ -198,86 +182,5 @@ async function handleConfirm(
       status: updatedPayout?.status,
       txHash: updatedPayout?.txHash,
     },
-  });
-}
-
-// ============================================================================
-// Release action
-// ============================================================================
-
-async function handleRelease(payoutId: string, session: Session) {
-  const payout = await getPayoutById(payoutId);
-
-  if (!payout) {
-    return Response.json({ error: 'Payout not found' }, { status: 404 });
-  }
-
-  if (payout.status !== 'awaiting_release') {
-    return Response.json({ error: 'Payout is not awaiting release' }, { status: 400 });
-  }
-
-  if (!payout.payerOrganizationId) {
-    return Response.json({ error: 'Payout is not an organization payment' }, { status: 400 });
-  }
-
-  // Verify org member with Access Key
-  const validation = await validateOrgSpending({
-    orgId: payout.payerOrganizationId,
-    teamMemberUserId: session.user.id,
-    tokenAddress: payout.tokenAddress,
-    amount: payout.amount,
-  });
-
-  if (!validation.valid) {
-    return Response.json(
-      { error: validation.error || 'Not authorized to release payment' },
-      { status: 403 }
-    );
-  }
-
-  const orgWalletAddress = await getOrgWalletAddress(payout.payerOrganizationId);
-
-  // Get bounty metadata for on-chain memo
-  let issueNumber = 0;
-  let prNumber = 0;
-  let username = '';
-
-  if (payout.bountyId) {
-    const bounty = await getBountyById(payout.bountyId);
-    if (bounty) issueNumber = bounty.githubIssueNumber;
-  }
-
-  if (payout.submissionId) {
-    const submission = await getSubmissionById(payout.submissionId);
-    if (submission?.githubPrNumber) prNumber = submission.githubPrNumber;
-
-    const recipient = await getUserById(payout.recipientUserId);
-    if (recipient?.name) username = recipient.name;
-  }
-
-  const txParams = buildPayoutTransaction({
-    tokenAddress: payout.tokenAddress as `0x${string}`,
-    recipientAddress: payout.recipientAddress as `0x${string}`,
-    amount: payout.amount,
-    issueNumber,
-    prNumber,
-    username,
-  });
-
-  return Response.json({
-    message: 'Ready to release payment',
-    payout: {
-      id: payout.id,
-      amount: payout.amount.toString(),
-      recipientAddress: payout.recipientAddress,
-      tokenAddress: payout.tokenAddress,
-      status: payout.status,
-    },
-    txParams: {
-      to: txParams.to,
-      data: txParams.data,
-      value: txParams.value.toString(),
-    },
-    signingAddress: orgWalletAddress,
   });
 }

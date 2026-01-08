@@ -1,4 +1,4 @@
-import { RepoOnboardingModal } from '@/components/onboarding';
+import { RepoOnboardingModal } from './_components/onboarding';
 import { getRepoBountiesWithSubmissions } from '@/db/queries/bounties';
 import { getUserOnboardingInfo } from '@/db/queries/passkeys';
 import { getRepoSettingsByName } from '@/db/queries/repo-settings';

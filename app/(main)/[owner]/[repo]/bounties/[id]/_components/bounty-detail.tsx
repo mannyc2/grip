@@ -1,10 +1,11 @@
 'use client';
 
-import { CreateWalletModal } from '@/components/auth/create-wallet-modal';
+import { CreateWalletModal } from '@/components/tempo/create-wallet-modal';
+import { TokenSymbol } from '@/components/tempo/token-symbol';
 import { BountyStatus } from '@/components/bounty/bounty-status';
 import { Button } from '@/components/ui/button';
 import { ButtonGroup, ButtonGroupSeparator } from '@/components/ui/button-group';
-import { UserAvatar } from '@/components/user/user-avatar';
+import { UserAvatar } from '@/components/ui/avatar';
 import { getExplorerTxUrl } from '@/lib/tempo/constants';
 import type { Bounty } from '@/lib/types';
 import { CheckCircle, ExternalLink, GitPullRequest, Github } from 'lucide-react';
@@ -267,7 +268,10 @@ export function BountyDetail({
                   <span className="text-3xl font-bold md:text-4xl">
                     ${Number(bounty.totalFunded).toLocaleString()}
                   </span>
-                  <span className="ml-2 text-lg text-muted-foreground">USDC</span>
+                  <TokenSymbol
+                    tokenAddress={bounty.tokenAddress as `0x${string}`}
+                    className="ml-2 text-lg text-muted-foreground"
+                  />
                 </>
               )}
             </div>

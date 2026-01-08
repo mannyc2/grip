@@ -1,6 +1,6 @@
 'use client';
 
-import { PasskeyOperationContent } from '@/components/passkey/passkey-operation-content';
+import { PasskeyOperationContent } from '@/components/tempo/passkey-operation-content';
 import { AddressDisplay } from '@/components/tempo/address-display';
 import { Button } from '@/components/ui/button';
 import { DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';

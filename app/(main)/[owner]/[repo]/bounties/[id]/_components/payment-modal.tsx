@@ -14,7 +14,8 @@ import {
 import { getExplorerTxUrl } from '@/lib/tempo/constants';
 import { Check, ExternalLink, KeyRound, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Hooks } from 'tempo.ts/wagmi';
+import { Hooks } from 'wagmi/tempo';
+import { formatUnits } from 'viem';
 import { useWaitForTransactionReceipt } from 'wagmi';
 
 /**
@@ -129,8 +130,8 @@ export function PaymentModal({
 
   const isProcessing = isPending || isConfirming || confirming;
 
-  // Format amount for display (assuming 6 decimals for USDC)
-  const formattedAmount = (Number(payout.amount) / 1_000_000).toFixed(2);
+  // Format amount for display (6 decimals for USDC)
+  const formattedAmount = formatUnits(payout.amount, 6);
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>

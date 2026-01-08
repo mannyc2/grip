@@ -2,7 +2,7 @@ import { bounties, db, passkey, payouts, repoSettings, submissions, user } from 
 import { and, asc, desc, eq, sql } from 'drizzle-orm';
 import { getNetworkForInsert, networkFilter } from '../network';
 
-export type PayoutStatus = 'pending' | 'awaiting_release' | 'confirmed' | 'failed';
+export type PayoutStatus = 'pending' | 'confirmed' | 'failed';
 
 export type CreatePayoutInput = {
   submissionId?: string;
@@ -30,7 +30,7 @@ export type CreatePayoutInput = {
   custodialWalletId?: string;
   isCustodial?: boolean;
 
-  // Status (defaults to 'pending', can be 'awaiting_release' for org payments)
+  // Status (defaults to 'pending')
   status?: PayoutStatus;
 };
 
@@ -138,6 +138,37 @@ export async function getPayoutsByRepoSettings(repoSettingsId: number | bigint |
     .innerJoin(user, eq(payouts.recipientUserId, user.id))
     .where(and(networkFilter(payouts), eq(payouts.repoSettingsId, repoIdValue)))
     .orderBy(desc(payouts.createdAt));
+}
+
+export async function getPendingPayoutsByRepoSettings(repoSettingsId: number | bigint | string) {
+  const repoIdValue =
+    typeof repoSettingsId === 'string'
+      ? BigInt(repoSettingsId)
+      : typeof repoSettingsId === 'number'
+        ? BigInt(repoSettingsId)
+        : repoSettingsId;
+
+  return db
+    .select({
+      payout: payouts,
+      bounty: bounties,
+      recipient: {
+        id: user.id,
+        name: user.name,
+        image: user.image,
+      },
+    })
+    .from(payouts)
+    .innerJoin(bounties, eq(payouts.bountyId, bounties.id))
+    .innerJoin(user, eq(payouts.recipientUserId, user.id))
+    .where(
+      and(
+        networkFilter(payouts),
+        eq(payouts.repoSettingsId, repoIdValue),
+        eq(payouts.status, 'pending')
+      )
+    )
+    .orderBy(asc(payouts.createdAt));
 }
 
 export async function updatePayoutStatus(

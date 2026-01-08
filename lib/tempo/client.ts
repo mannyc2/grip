@@ -1,8 +1,8 @@
 import 'server-only';
 
-import { tempo } from 'tempo.ts/chains';
-import { tempoActions } from 'tempo.ts/viem';
 import { http, createClient, publicActions } from 'viem';
+import { tempoTestnet } from 'viem/chains';
+import { tempoActions } from 'viem/tempo';
 
 /**
  * Tempo SDK Client
@@ -19,8 +19,8 @@ import { http, createClient, publicActions } from 'viem';
  * See: https://docs.tempo.xyz/sdk/typescript/viem/setup
  */
 export const tempoClient = createClient({
-  chain: tempo(),
-  transport: http(process.env.TEMPO_RPC_URL ?? 'https://rpc.testnet.tempo.xyz'),
+  chain: tempoTestnet,
+  transport: http(process.env.TEMPO_RPC_URL ?? tempoTestnet.rpcUrls.default.http[0]),
 })
   .extend(publicActions)
   .extend(tempoActions());

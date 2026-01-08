@@ -2,6 +2,7 @@
 
 import { AccessKeyManager } from '@/app/(main)/settings/_components/access-key-manager';
 import { CreateAccessKeyInline } from '@/app/(main)/settings/_components/create-access-key-inline';
+import { PayoutQueue } from '@/app/(main)/[owner]/[repo]/_components/payout-queue';
 import { AddressDisplay } from '@/components/tempo/address-display';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,7 +10,7 @@ import { TEMPO_TOKENS } from '@/lib/tempo/constants';
 import { ExternalLink, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { formatUnits } from 'viem';
-import { Hooks } from 'tempo.ts/wagmi';
+import { Hooks } from 'wagmi/tempo';
 import { useCallback, useEffect, useState } from 'react';
 
 interface TreasurySettingsProps {
@@ -207,6 +208,11 @@ export function TreasurySettings({ githubRepoId }: TreasurySettingsProps) {
             </a>
           </CardContent>
         </Card>
+
+        {/* Pending Payouts Section */}
+        <div className="mt-6">
+          <PayoutQueue githubRepoId={githubRepoId} />
+        </div>
 
         {/* Access Keys Section */}
         {treasuryInfo.credentialId && (

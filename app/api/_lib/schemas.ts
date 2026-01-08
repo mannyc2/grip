@@ -88,18 +88,13 @@ export const createBountySchema = z.object({
 
 export type CreateBounty = z.infer<typeof createBountySchema>;
 
-// Single payout action schema (consolidated confirm + release)
-export const payoutActionSchema = z.discriminatedUnion('action', [
-  z.object({
-    action: z.literal('confirm'),
-    txHash: hexHash,
-    status: z.enum(['success', 'reverted']).optional(),
-    blockNumber: z.union([z.string(), z.number()]).optional(),
-  }),
-  z.object({
-    action: z.literal('release'),
-  }),
-]);
+// Single payout confirmation schema
+export const payoutActionSchema = z.object({
+  action: z.literal('confirm'),
+  txHash: hexHash,
+  status: z.enum(['success', 'reverted']).optional(),
+  blockNumber: z.union([z.string(), z.number()]).optional(),
+});
 
 export type PayoutAction = z.infer<typeof payoutActionSchema>;
 

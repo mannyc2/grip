@@ -12,7 +12,8 @@ import {
 import { getExplorerTxUrl } from '@/lib/tempo/constants';
 import { Check, ExternalLink, KeyRound, Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { Actions, Hooks } from 'tempo.ts/wagmi';
+import { Actions, Hooks } from 'wagmi/tempo';
+import { formatUnits } from 'viem';
 import { useConnection, useWaitForTransactionReceipt } from 'wagmi';
 import { config } from '@/lib/wagmi-config';
 
@@ -28,7 +29,7 @@ import { config } from '@/lib/wagmi-config';
  */
 
 interface PayoutQueueProps {
-  projectId: string;
+  githubRepoId: number;
 }
 
 interface PayoutItem {
@@ -49,7 +50,7 @@ interface PayoutItem {
   };
 }
 
-export function PayoutQueue({ projectId }: PayoutQueueProps) {
+export function PayoutQueue({ githubRepoId }: PayoutQueueProps) {
   const [loading, setLoading] = useState(false);
   const [signing, setSigning] = useState(false);
   const [payouts, setPayouts] = useState<PayoutItem[]>([]);
@@ -69,15 +70,15 @@ export function PayoutQueue({ projectId }: PayoutQueueProps) {
     account: address!,
     query: { enabled: Boolean(address) },
   });
-  const feeToken = userFeeToken?.address ?? null; // null lets protocol handle fallback
+  const feeToken = userFeeToken?.address; // undefined lets protocol handle fallback
 
-  // Fetch approved payouts
+  // Fetch pending payouts
   // Using useCallback because fetchPayouts is used in useEffect dependency array
-  // Depends on projectId from props - when projectId changes, fetchPayouts is recreated
+  // Depends on githubRepoId from props - when githubRepoId changes, fetchPayouts is recreated
   const fetchPayouts = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/projects/${projectId}/payouts/batch`);
+      const res = await fetch(`/api/repo-settings/${githubRepoId}/payouts/batch`);
       const data = await res.json();
       setPayouts(data.payouts || []);
       setSelectedIds(new Set((data.payouts || []).map((p: PayoutItem) => p.id)));
@@ -86,7 +87,7 @@ export function PayoutQueue({ projectId }: PayoutQueueProps) {
     } finally {
       setLoading(false);
     }
-  }, [projectId]);
+  }, [githubRepoId]);
 
   useEffect(() => {
     if (!isConfirmed || !txHash || batchConfirmed || pendingPayoutIds.length === 0) {
@@ -244,7 +245,7 @@ export function PayoutQueue({ projectId }: PayoutQueueProps) {
                 {payout.bounty.title} (#{payout.bounty.issueNumber})
               </p>
               <p className="text-sm text-muted-foreground">
-                {payout.recipient.name} • ${(payout.amount / 1_000_000).toFixed(2)} USDC
+                {payout.recipient.name} • ${formatUnits(BigInt(payout.amount), 6)} USDC
               </p>
             </div>
           </div>
@@ -277,7 +278,7 @@ export function PayoutQueue({ projectId }: PayoutQueueProps) {
       <CardFooter className="flex justify-between">
         <div>
           <p className="text-sm text-muted-foreground">{selectedCount} selected</p>
-          <p className="font-medium">Total: ${(totalAmount / 1_000_000).toFixed(2)} USDC</p>
+          <p className="font-medium">Total: ${formatUnits(BigInt(totalAmount), 6)} USDC</p>
         </div>
 
         <Button onClick={handleBatchSign} disabled={signing || selectedCount === 0}>

@@ -8,7 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { PasskeyOperationContent, getPasskeyTitle } from '@/components/passkey';
+import { PasskeyOperationContent, getPasskeyTitle } from '@/components/tempo';
 import { passkey } from '@/lib/auth/auth-client';
 import {
   classifyWebAuthnError,

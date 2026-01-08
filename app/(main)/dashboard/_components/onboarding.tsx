@@ -18,7 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import type { OnboardingStatus } from '@/db/queries/bounties';
-import { skipOnboarding } from '@/app/(main)/dashboard/actions';
+import { skipOnboarding } from '../actions';
 
 interface OnboardingProps {
   status: OnboardingStatus;

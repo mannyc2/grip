@@ -1,4 +1,4 @@
-import { getPayoutsByRepoSettings } from '@/db/queries/payouts';
+import { getPendingPayoutsByRepoSettings } from '@/db/queries/payouts';
 import { getRepoSettingsByGithubRepoId, isUserRepoOwner } from '@/db/queries/repo-settings';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { buildTransferWithMemoData, encodeBountyMemo } from '@/lib/tempo/payments';
@@ -8,7 +8,7 @@ import type { NextRequest } from 'next/server';
 /**
  * GET /api/repo-settings/[id]/payouts/batch
  *
- * Fetch approved payouts for a repository ready for batch processing.
+ * Fetch pending payouts for a repository ready for batch signing.
  * Returns transaction operations pre-built for multicall signing.
  */
 export async function GET(
@@ -35,15 +35,15 @@ export async function GET(
       return Response.json({ error: 'Unauthorized' }, { status: 403 });
     }
 
-    const approvedPayouts = await getPayoutsByRepoSettings(githubRepoId);
+    const pendingPayouts = await getPendingPayoutsByRepoSettings(githubRepoId);
 
     // Build transaction operations and response
-    const { operations, payouts, totalAmount } = buildBatchResponse(approvedPayouts);
+    const { operations, payouts, totalAmount } = buildBatchResponse(pendingPayouts);
 
     return Response.json({
-      count: approvedPayouts.length,
+      count: pendingPayouts.length,
       totalAmount: totalAmount.toString(),
-      tokenAddress: approvedPayouts[0]?.payout.tokenAddress,
+      tokenAddress: pendingPayouts[0]?.payout.tokenAddress,
       operations,
       payouts,
     });
@@ -66,8 +66,8 @@ type PayoutWithDetails = {
   recipient: { id: string; name: string | null; image: string | null };
 };
 
-function buildBatchResponse(approvedPayouts: PayoutWithDetails[]) {
-  const operations = approvedPayouts.map((item) => ({
+function buildBatchResponse(pendingPayouts: PayoutWithDetails[]) {
+  const operations = pendingPayouts.map((item) => ({
     payoutId: item.payout.id,
     to: item.payout.tokenAddress,
     data: buildTransferWithMemoData({
@@ -82,7 +82,7 @@ function buildBatchResponse(approvedPayouts: PayoutWithDetails[]) {
     value: '0',
   }));
 
-  const payouts = approvedPayouts.map((item) => ({
+  const payouts = pendingPayouts.map((item) => ({
     id: item.payout.id,
     amount: item.payout.amount.toString(),
     recipient: {
@@ -97,7 +97,7 @@ function buildBatchResponse(approvedPayouts: PayoutWithDetails[]) {
     },
   }));
 
-  const totalAmount = approvedPayouts.reduce((sum, item) => sum + item.payout.amount, BigInt(0));
+  const totalAmount = pendingPayouts.reduce((sum, item) => sum + item.payout.amount, BigInt(0));
 
   return { operations, payouts, totalAmount };
 }

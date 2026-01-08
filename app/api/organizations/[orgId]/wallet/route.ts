@@ -1,8 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { getOrgWalletAddress, isOrgMember } from '@/db/queries/organizations';
-import { TEMPO_TOKENS } from '@/lib/tempo/constants';
 import { getCurrentNetwork } from '@/db/network';
+import { TEMPO_TOKENS } from '@/lib/tempo/constants';
+import { getTokenMetadata } from '@/lib/tempo/tokens';
 
 type RouteContext = {
   params: Promise<{ orgId: string }>;
@@ -23,13 +24,14 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     }
 
     const address = await getOrgWalletAddress(orgId);
+    const metadata = await getTokenMetadata(TEMPO_TOKENS.USDC);
 
     return NextResponse.json({
       address,
       network: getCurrentNetwork(),
       tokenAddress: TEMPO_TOKENS.USDC,
-      tokenDecimals: 6,
-      tokenSymbol: 'USDC',
+      tokenDecimals: metadata.decimals,
+      tokenSymbol: metadata.symbol,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'Unauthorized') {
