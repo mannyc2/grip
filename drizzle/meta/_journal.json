@@ -169,6 +169,48 @@
       "when": 1767627052940,
       "tag": "0023_nosy_martin_li",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1767904499500,
+      "tag": "0024_sparkling_living_tribunal",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1767904964960,
+      "tag": "0025_solid_hellfire_club",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1767908945285,
+      "tag": "0026_slim_rogue",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1767910617139,
+      "tag": "0027_wakeful_hitman",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1767916522823,
+      "tag": "0028_outstanding_tempest",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1767971854826,
+      "tag": "0029_first_piledriver",
+      "breakpoints": true
     }
   ]
 }

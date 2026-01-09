@@ -17,7 +17,7 @@ import {
   uuid,
   varchar,
 } from 'drizzle-orm/pg-core';
-import { organization, passkey, user } from './auth';
+import { organization, passkey, user, wallet } from './auth';
 import type { AccessKeyLimits, ActivityMetadata, GithubLabel, NotificationMetadata } from './types';
 
 /**
@@ -662,21 +662,17 @@ export const accessKeys = pgTable(
       onDelete: 'cascade',
     }),
 
-    // Turnkey backend wallet address (identifier, not private key!)
-    // This is the keyId in KeyAuthorization
-    // For personal access keys: Turnkey backend wallet
-    // For org access keys: NULL (team member signs directly)
-    backendWalletAddress: varchar('backend_wallet_address', { length: 42 }),
+    // Root wallet (the account being controlled - user's passkey wallet)
+    rootWalletId: text('root_wallet_id')
+      .notNull()
+      .references(() => wallet.id, { onDelete: 'restrict' }),
 
-    // Team member authorized to sign (only for org access keys)
-    // For personal access keys: NULL (backend signs via Turnkey)
-    // For org access keys: Team member's passkey ID
-    authorizedUserPasskeyId: text('authorized_user_passkey_id').references(() => passkey.id, {
-      onDelete: 'cascade',
-    }),
+    // Key wallet (authorized to sign for the account - backend/server wallet)
+    keyWalletId: text('key_wallet_id')
+      .notNull()
+      .references(() => wallet.id, { onDelete: 'restrict' }),
 
-    // Authorization parameters
-    keyType: accessKeyTypeEnum('key_type').notNull().default('secp256k1'),
+    // Authorization parameters (keyType is on wallet table now)
     chainId: integer('chain_id').notNull(), // 42429 for testnet, 0 for any chain
     expiry: i64('expiry'), // Unix timestamp (NULL = no expiry)
 
@@ -709,20 +705,16 @@ export const accessKeys = pgTable(
       .$onUpdate(() => new Date().toISOString()),
   },
   (table) => ({
-    // Ensure one active access key per user per network per backend wallet
+    // Ensure one active access key per user per network per key wallet
     // Partial unique index: only enforced when status = 'active', allows multiple revoked/expired keys
     uniqueActiveKey: uniqueIndex('idx_access_keys_unique_active')
-      .on(table.userId, table.backendWalletAddress, table.network)
+      .on(table.userId, table.keyWalletId, table.network)
       .where(sql`${table.status} = 'active'`),
     idxAccessKeysUser: index('idx_access_keys_user').on(table.userId, table.network),
     idxAccessKeysOrg: index('idx_access_keys_org').on(table.organizationId, table.network),
-    idxAccessKeysAuthorizedUser: index('idx_access_keys_authorized_user').on(
-      table.authorizedUserPasskeyId
-    ),
     idxAccessKeysStatus: index('idx_access_keys_status').on(table.status),
-    idxAccessKeysBackendWallet: index('idx_access_keys_backend_wallet').on(
-      table.backendWalletAddress
-    ),
+    idxAccessKeysRootWallet: index('idx_access_keys_root_wallet').on(table.rootWalletId),
+    idxAccessKeysKeyWallet: index('idx_access_keys_key_wallet').on(table.keyWalletId),
     chkAccessKeysOwner: sql`CHECK (
       (${table.userId} IS NOT NULL AND ${table.organizationId} IS NULL) OR
       (${table.userId} IS NULL AND ${table.organizationId} IS NOT NULL)

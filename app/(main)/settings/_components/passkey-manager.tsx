@@ -6,7 +6,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Item, ItemContent, ItemGroup, ItemTitle } from '@/components/ui/item';
 import { PasskeyOperationContent, getPasskeyTitle } from '@/components/tempo';
-import { passkey } from '@/lib/auth/auth-client';
+import { authClient } from '@/lib/auth/auth-client';
 import {
   classifyWebAuthnError,
   type PasskeyOperationError,
@@ -15,6 +15,7 @@ import {
 import { AlertTriangle, ExternalLink, Key } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { useDisconnect } from 'wagmi';
 
 /**
  * PasskeyManager - Client component for passkey creation/deletion
@@ -25,6 +26,7 @@ import { useState } from 'react';
 
 interface Wallet {
   id: string;
+  credentialID: string;
   name: string | null;
   tempoAddress: string | null;
   createdAt: string;
@@ -36,6 +38,7 @@ interface PasskeyManagerProps {
 
 export function PasskeyManager({ wallet }: PasskeyManagerProps) {
   const router = useRouter();
+  const { disconnect } = useDisconnect();
   const [phase, setPhase] = useState<PasskeyPhase>('ready');
   const [error, setError] = useState<PasskeyOperationError | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -47,12 +50,15 @@ export function PasskeyManager({ wallet }: PasskeyManagerProps) {
     setPhase('registering');
 
     try {
-      await passkey.addPasskey({ name: 'GRIP Wallet' });
+      // Single call handles full WebAuthn ceremony + wallet creation
+      const result = await authClient.registerPasskey({ name: 'GRIP Wallet' });
+
+      if (result.error) {
+        throw new Error(result.error.message || 'Failed to register passkey');
+      }
 
       setPhase('processing');
-      // Refresh to show new wallet
       router.refresh();
-
       setPhase('success');
 
       setTimeout(() => {
@@ -72,10 +78,13 @@ export function PasskeyManager({ wallet }: PasskeyManagerProps) {
 
     setIsDeleting(true);
     try {
-      const result = await passkey.deletePasskey({ id: wallet.id });
+      // Delete passkey by WebAuthn credential ID (wallet cascades via FK)
+      const result = await authClient.deletePasskey(wallet.credentialID);
       if (result.error) {
         throw new Error(result.error.message || 'Failed to delete');
       }
+      // Disconnect wagmi to clear localStorage cache
+      disconnect();
       router.refresh(); // Refresh to update UI
       setShowDeleteConfirm(false);
     } catch (err) {

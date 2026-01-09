@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { getOrgWalletAddress, isOrgMember } from '@/db/queries/organizations';
 import { getCurrentNetwork } from '@/db/network';
-import { TEMPO_TOKENS } from '@/lib/tempo/constants';
+import { tempoClient } from '@/lib/tempo/client';
 import { getTokenMetadata } from '@/lib/tempo/tokens';
 
 type RouteContext = {
@@ -24,14 +24,31 @@ export async function GET(_request: NextRequest, context: RouteContext) {
     }
 
     const address = await getOrgWalletAddress(orgId);
-    const metadata = await getTokenMetadata(TEMPO_TOKENS.USDC);
 
+    // Get org owner's fee token preference
+    const userFeeToken = address
+      ? await tempoClient.fee.getUserToken({ account: address as `0x${string}` })
+      : null;
+    const tokenAddress = userFeeToken?.address as `0x${string}` | undefined;
+
+    if (tokenAddress) {
+      const metadata = await getTokenMetadata(tokenAddress);
+      return NextResponse.json({
+        address,
+        network: getCurrentNetwork(),
+        tokenAddress,
+        tokenDecimals: metadata.decimals,
+        tokenSymbol: metadata.symbol,
+      });
+    }
+
+    // No fee token set - return without token info
     return NextResponse.json({
       address,
       network: getCurrentNetwork(),
-      tokenAddress: TEMPO_TOKENS.USDC,
-      tokenDecimals: metadata.decimals,
-      tokenSymbol: metadata.symbol,
+      tokenAddress: undefined,
+      tokenDecimals: undefined,
+      tokenSymbol: undefined,
     });
   } catch (error) {
     if (error instanceof Error && error.message === 'Unauthorized') {

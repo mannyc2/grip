@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { signIn, useSession } from '@/lib/auth/auth-client';
+import { authClient, signIn, useSession } from '@/lib/auth/auth-client';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 
@@ -45,19 +45,13 @@ export function LoginForm() {
       const redirectTo =
         searchParams.get('callbackUrl') || searchParams.get('redirect') || '/explore';
 
-      // Protect against the WebAuthn flow getting stuck (some browsers/devices can leave
-      // the promise pending if the prompt never appears). We can't cancel WebAuthn, but
-      // we can unblock the UI and let the user retry.
-      // TODO: is this necesary?
-      const result = await Promise.race([
-        signIn.passkey(),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Passkey sign-in timed out')), 60_000)
-        ),
-      ]);
+      // Single call handles full WebAuthn ceremony + session creation
+      const result = await authClient.authenticateWithPasskey();
+
       if (result.error) {
-        throw new Error(result.error.message);
+        throw new Error(result.error.message || 'Authentication failed');
       }
+
       router.push(redirectTo);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sign in with passkey');

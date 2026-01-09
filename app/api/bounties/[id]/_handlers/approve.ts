@@ -78,7 +78,7 @@ export async function handleApprove(
 
   // Get contributor wallet - REQUIRED (no pending payments)
   const contributorWallet = await getUserWallet(submissionToApprove.userId);
-  if (!contributorWallet?.tempoAddress) {
+  if (!contributorWallet?.address) {
     return Response.json(
       { error: 'Contributor must create a wallet before receiving payment' },
       { status: 400 }
@@ -116,8 +116,8 @@ export async function handleApprove(
     recipientUserId: submissionToApprove.userId,
     payerUserId: isOrgPayment ? undefined : (bounty.primaryFunderId ?? undefined),
     payerOrganizationId: isOrgPayment ? (bounty.organizationId ?? undefined) : undefined,
-    recipientPasskeyId: contributorWallet.id,
-    recipientAddress: contributorWallet.tempoAddress,
+    recipientPasskeyId: contributorWallet.passkeyId,
+    recipientAddress: contributorWallet.address,
     amount: bounty.totalFunded,
     tokenAddress: bounty.tokenAddress,
     memoIssueNumber: bounty.githubIssueNumber,
@@ -128,7 +128,7 @@ export async function handleApprove(
   // Build transaction
   const txParams = buildPayoutTransaction({
     tokenAddress: bounty.tokenAddress as `0x${string}`,
-    recipientAddress: contributorWallet.tempoAddress as `0x${string}`,
+    recipientAddress: contributorWallet.address as `0x${string}`,
     amount: BigInt(bounty.totalFunded.toString()),
     issueNumber: bounty.githubIssueNumber,
     prNumber: submissionToApprove.githubPrNumber ?? 0,
@@ -146,7 +146,7 @@ export async function handleApprove(
     const autoSignResult = await tryAutoSign({
       session,
       bounty,
-      funderWalletAddress: funderWallet?.tempoAddress,
+      funderWalletAddress: funderWallet?.address,
       payout,
       txParams,
       memo,
@@ -178,7 +178,7 @@ export async function handleApprove(
     contributor: {
       id: submissionDetails.submitter.id,
       name: submissionDetails.submitter.name,
-      address: contributorWallet.tempoAddress,
+      address: contributorWallet.address,
     },
   });
 }
@@ -271,16 +271,16 @@ async function tryAutoSign(params: AutoSignParams): Promise<Response | null> {
     const txHash = await broadcastTransaction(rawTransaction);
     await updatePayoutStatus(payout.id, 'pending', { txHash });
 
-    // Log usage
+    // Log usage (using access_key_created event for now - should add access_key_used to enum)
     await db.insert(activityLog).values({
-      eventType: 'access_key_created',
+      eventType: 'payout_sent',
       network,
       userId: session.user.id,
       bountyId: bounty.id,
       payoutId: payout.id,
       metadata: {
         accessKeyId: activeKey.id,
-        backendWalletAddress: activeKey.backendWalletAddress,
+        keyWalletId: activeKey.keyWalletId,
         tokenAddress: bounty.tokenAddress,
         amount: bounty.totalFunded.toString(),
         txHash,
@@ -308,7 +308,7 @@ async function tryAutoSign(params: AutoSignParams): Promise<Response | null> {
       contributor: {
         id: submissionDetails.submitter.id,
         name: submissionDetails.submitter.name,
-        address: contributorWallet.tempoAddress,
+        address: contributorWallet.address,
       },
     });
   } catch (error) {

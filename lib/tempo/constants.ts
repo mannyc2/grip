@@ -16,20 +16,6 @@ import { tempoTestnet } from 'viem/chains';
 /** Re-export for convenience - prefer importing directly from viem/chains */
 export { tempoTestnet };
 
-/**
- * Well-known token addresses on Tempo
- *
- * USDC is used for bounty payments and balance display.
- * Fee tokens are handled by user preference with protocol fallback to pathUSD.
- */
-const TEMPO_USDC_ADDRESS =
-  process.env.TEMPO_USDC_ADDRESS ?? '0x20c0000000000000000000000000000000000001';
-
-export const TEMPO_TOKENS = {
-  /** USDC on Tempo - use this for bounty payments and balance display */
-  USDC: TEMPO_USDC_ADDRESS as `0x${string}`,
-} as const;
-
 /** Official Tempo tokenlist for fee token selection and token discovery */
 export const TEMPO_TOKENLIST_URL = 'https://tempoxyz.github.io/tempo-apps/42429/tokenlist.json';
 

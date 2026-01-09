@@ -5,6 +5,7 @@ import {
   getOrgMembersWithUsers,
   getOrgAccessKeys,
 } from '@/db/queries/organizations';
+import { getPasskeysByUser } from '@/db/queries/passkeys';
 import { getSession } from '@/lib/auth/auth-server';
 import { notFound, redirect } from 'next/navigation';
 import { AccessKeysContent } from '../_components/access-keys-content';
@@ -44,11 +45,14 @@ export default async function AccessKeysPage({ params }: AccessKeysPageProps) {
     redirect(`/${owner}/settings`);
   }
 
-  const [ownerAccessKey, orgAccessKeys, members] = await Promise.all([
+  const [ownerAccessKey, orgAccessKeys, members, passkeys] = await Promise.all([
     getActiveAccessKey(session.user.id),
     getOrgAccessKeys(org.id),
     getOrgMembersWithUsers(org.id),
+    getPasskeysByUser(session.user.id),
   ]);
+
+  const walletPasskey = passkeys.find((p) => p.wallet?.address) ?? null;
 
   return (
     <AccessKeysContent
@@ -56,6 +60,7 @@ export default async function AccessKeysPage({ params }: AccessKeysPageProps) {
       orgAccessKeys={orgAccessKeys ?? []}
       members={members}
       organizationId={org.id}
+      walletAddress={(walletPasskey?.wallet?.address ?? null) as `0x${string}` | null}
     />
   );
 }

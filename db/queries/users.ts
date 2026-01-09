@@ -1,4 +1,4 @@
-import { account, bounties, db, invitation, passkey, payouts, user } from '@/db';
+import { account, bounties, db, invitation, payouts, user, wallet } from '@/db';
 import { member } from '@/db/schema/auth';
 import { and, eq, gt, sql } from 'drizzle-orm';
 import { networkFilter } from '../network';
@@ -7,18 +7,18 @@ import { networkFilter } from '../network';
  * Get user by name with computed stats and wallet address
  *
  * Computes stats from payouts (no cached user_stats table).
- * Joins with passkey for tempoAddress.
+ * Joins with wallet table for passkey wallet address.
  */
 export async function getUserByName(name: string) {
   const [result] = await db
     .select({
       user: user,
       wallet: {
-        tempoAddress: passkey.tempoAddress,
+        address: wallet.address,
       },
     })
     .from(user)
-    .leftJoin(passkey, eq(user.id, passkey.userId))
+    .leftJoin(wallet, and(eq(wallet.userId, user.id), eq(wallet.walletType, 'passkey')))
     .where(eq(user.name, name))
     .limit(1);
 
@@ -46,7 +46,7 @@ export async function getUserByName(name: string) {
     image: result.user.image,
     createdAt: result.user.createdAt,
     githubUserId: result.user.githubUserId,
-    tempoAddress: result.wallet?.tempoAddress ?? null,
+    tempoAddress: result.wallet?.address ?? null,
     totalEarned: stats?.totalEarned ?? 0,
     bountiesCompleted: stats?.bountiesCompleted ?? 0,
   };
@@ -60,11 +60,11 @@ export async function getUserById(userId: string) {
     .select({
       user: user,
       wallet: {
-        tempoAddress: passkey.tempoAddress,
+        address: wallet.address,
       },
     })
     .from(user)
-    .leftJoin(passkey, eq(user.id, passkey.userId))
+    .leftJoin(wallet, and(eq(wallet.userId, user.id), eq(wallet.walletType, 'passkey')))
     .where(eq(user.id, userId))
     .limit(1);
 
@@ -92,7 +92,7 @@ export async function getUserById(userId: string) {
     image: result.user.image,
     createdAt: result.user.createdAt,
     githubUserId: result.user.githubUserId,
-    tempoAddress: result.wallet?.tempoAddress ?? null,
+    tempoAddress: result.wallet?.address ?? null,
     totalEarned: stats?.totalEarned ?? 0,
     bountiesCompleted: stats?.bountiesCompleted ?? 0,
   };

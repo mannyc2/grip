@@ -15,7 +15,8 @@
 
 import { tempoTestnet } from 'viem/chains';
 import { http, createConfig } from 'wagmi';
-import { KeyManager, webAuthn } from 'wagmi/tempo';
+import { webAuthn } from 'wagmi/tempo';
+import { tempoKeyManager } from '@/lib/auth/tempo-plugin/client';
 
 /**
  * Wagmi configuration with Tempo's webAuthn connector
@@ -37,26 +38,8 @@ export const config = createConfig({
   ],
   connectors: [
     webAuthn({
-      // Custom KeyManager that stores public keys in our database
-      // instead of localStorage (which would be lost on logout/device change)
-      keyManager: KeyManager.http(
-        {
-          // Better-auth tempo plugin endpoints with path params
-          // SDK replaces :credentialId with the actual credential ID
-          getPublicKey: '/api/auth/tempo/keymanager/:credentialId',
-          setPublicKey: '/api/auth/tempo/keymanager/:credentialId',
-        },
-        {
-          // CRITICAL: Include credentials (cookies) with requests
-          // Without this, the session cookie won't be sent and requests will fail with 401
-          fetch: (input, init) => {
-            return fetch(input, {
-              ...init,
-              credentials: 'include', // Include cookies for same-origin requests
-            });
-          },
-        }
-      ),
+      // KeyManager from tempo plugin - stores public keys in database
+      keyManager: tempoKeyManager,
     }),
   ],
   // Disable auto-detection of injected wallets

@@ -1,7 +1,7 @@
 import { db } from '@/db';
 import { networkFilter } from '../network';
 import { accessKeys } from '@/db/schema/business';
-import { member, passkey } from '@/db/schema/auth';
+import { member, passkey, wallet } from '@/db/schema/auth';
 import { and, eq, sql } from 'drizzle-orm';
 
 // ============================================================================
@@ -9,23 +9,28 @@ import { and, eq, sql } from 'drizzle-orm';
 // ============================================================================
 
 /**
- * Get organization wallet address (owner's passkey address)
+ * Get organization wallet address (owner's passkey wallet address)
  */
 export async function getOrgWalletAddress(orgId: string): Promise<`0x${string}`> {
   const owner = await db.query.member.findFirst({
     where: and(eq(member.organizationId, orgId), eq(member.role, 'owner')),
     with: {
       user: {
-        with: { passkeys: true },
+        with: {
+          wallets: {
+            where: eq(wallet.walletType, 'passkey'),
+            limit: 1,
+          },
+        },
       },
     },
   });
 
-  if (!owner?.user?.passkeys?.[0]?.tempoAddress) {
-    throw new Error('Organization owner has no passkey with Tempo address');
+  if (!owner?.user?.wallets?.[0]?.address) {
+    throw new Error('Organization owner has no passkey wallet');
   }
 
-  return owner.user.passkeys[0].tempoAddress as `0x${string}`;
+  return owner.user.wallets[0].address as `0x${string}`;
 }
 
 // ============================================================================
@@ -58,18 +63,26 @@ export async function getOrgMembership(orgId: string, userId: string) {
 
 /**
  * Get active Access Key for org team member
+ *
+ * Finds access key where the key wallet belongs to the team member.
+ * Join path: accessKeys.keyWalletId → wallet.passkeyId → passkey.userId
  */
 export async function getOrgAccessKey(orgId: string, teamMemberUserId: string) {
-  const teamMemberPasskey = await db.query.passkey.findFirst({
-    where: eq(passkey.userId, teamMemberUserId),
-  });
+  // Find wallet for team member's passkey
+  const teamMemberWallet = await db
+    .select({ id: wallet.id })
+    .from(wallet)
+    .innerJoin(passkey, eq(wallet.passkeyId, passkey.id))
+    .where(eq(passkey.userId, teamMemberUserId))
+    .limit(1)
+    .then((rows) => rows[0]);
 
-  if (!teamMemberPasskey) return null;
+  if (!teamMemberWallet) return null;
 
   return db.query.accessKeys.findFirst({
     where: and(
       eq(accessKeys.organizationId, orgId),
-      eq(accessKeys.authorizedUserPasskeyId, teamMemberPasskey.id),
+      eq(accessKeys.keyWalletId, teamMemberWallet.id),
       eq(accessKeys.status, 'active'),
       networkFilter(accessKeys)
     ),
@@ -78,33 +91,45 @@ export async function getOrgAccessKey(orgId: string, teamMemberUserId: string) {
 
 /**
  * Get all Access Keys for an organization
+ *
+ * Joins through wallet → passkey → user to get key wallet user info.
+ * Note: expiry is serialized to string since JSON cannot represent bigint
  */
 export async function getOrgAccessKeys(orgId: string) {
   const { user } = await import('@/db/schema/auth');
 
-  return db
+  // Join: accessKeys.keyWalletId → wallet → passkey → user
+  const results = await db
     .select({
       id: accessKeys.id,
       organizationId: accessKeys.organizationId,
       network: accessKeys.network,
-      authorizedUserPasskeyId: accessKeys.authorizedUserPasskeyId,
-      keyType: accessKeys.keyType,
+      rootWalletId: accessKeys.rootWalletId,
+      keyWalletId: accessKeys.keyWalletId,
       chainId: accessKeys.chainId,
       expiry: accessKeys.expiry,
       limits: accessKeys.limits,
       status: accessKeys.status,
       createdAt: accessKeys.createdAt,
       label: accessKeys.label,
+      keyType: wallet.keyType,
       user: {
         id: user.id,
         name: user.name,
       },
     })
     .from(accessKeys)
-    .leftJoin(passkey, eq(accessKeys.authorizedUserPasskeyId, passkey.id))
+    .leftJoin(wallet, eq(accessKeys.keyWalletId, wallet.id))
+    .leftJoin(passkey, eq(wallet.passkeyId, passkey.id))
     .leftJoin(user, eq(passkey.userId, user.id))
     .where(and(eq(accessKeys.organizationId, orgId), networkFilter(accessKeys)))
     .orderBy(accessKeys.createdAt);
+
+  // Serialize bigint expiry to string (JSON can't represent bigint)
+  return results.map((key) => ({
+    ...key,
+    expiry: key.expiry !== null ? key.expiry.toString() : null,
+  }));
 }
 
 /**
@@ -201,7 +226,7 @@ export async function getOrgBountyData(orgId: string) {
 }
 
 /**
- * Get org members with their GRIP user data
+ * Get org members with their GRIP user data (including wallets)
  */
 export async function getOrgMembersWithUsers(orgId: string) {
   return db.query.member.findMany({
@@ -209,7 +234,7 @@ export async function getOrgMembersWithUsers(orgId: string) {
     with: {
       user: {
         with: {
-          passkeys: true,
+          wallets: true,
         },
       },
     },
