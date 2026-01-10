@@ -1,7 +1,7 @@
 import { db, passkey, wallet } from '@/db';
-import { accessKeys } from '@/db/schema/business';
+import { accessKey } from '@/db/schema/auth';
 import { and, desc, eq } from 'drizzle-orm';
-import { networkFilter } from '../network';
+import { chainIdFilter } from '../network';
 
 /**
  * Get all passkeys for a user with their wallet addresses
@@ -64,10 +64,10 @@ export async function getUserOnboardingInfo(userId: string): Promise<UserOnboard
 
   // Check for active access key
   const [activeKey] = await db
-    .select({ id: accessKeys.id })
-    .from(accessKeys)
+    .select({ id: accessKey.id })
+    .from(accessKey)
     .where(
-      and(eq(accessKeys.userId, userId), eq(accessKeys.status, 'active'), networkFilter(accessKeys))
+      and(eq(accessKey.userId, userId), eq(accessKey.status, 'active'), chainIdFilter(accessKey))
     )
     .limit(1);
 

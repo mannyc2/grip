@@ -9,11 +9,9 @@ const connectionString = process.env.DATABASE_URL!;
 const client = postgres(connectionString, { prepare: false });
 
 // Combine auth and business schemas
-// Note: accessKey alias is for better-auth's tempo plugin which expects singular model name
 const schema = {
   ...authSchema,
   ...businessSchema,
-  accessKey: businessSchema.accessKeys,
 };
 
 export const db = drizzle(client, { schema });

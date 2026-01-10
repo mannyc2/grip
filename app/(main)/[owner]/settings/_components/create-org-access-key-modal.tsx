@@ -18,6 +18,7 @@ import type { PasskeyOperationError, PasskeyPhase } from '@/lib/webauthn';
 import { useCallback, useMemo, useState } from 'react';
 import { authClient } from '@/lib/auth/auth-client';
 import { config } from '@/lib/wagmi-config';
+import { getChainId } from '@/lib/network';
 import type { OrgAccessKey, OrgMember } from '../_lib/types';
 
 type CreateOrgAccessKeyModalProps = {
@@ -81,6 +82,7 @@ export function CreateOrgAccessKeyModal({
       // Sign authorization for team member's passkey (webAuthn type)
       const { data: signResult, error: signError } = await authClient.signKeyAuthorization({
         config,
+        chainId: getChainId(),
         keyType: 'webAuthn',
         address: selectedMemberWalletAddress as `0x${string}`,
         limits: [{ token: tokenAddress, amount: limitAmount }],
@@ -132,11 +134,10 @@ export function CreateOrgAccessKeyModal({
       const newKey: OrgAccessKey = {
         id: result.id,
         organizationId: result.organizationId,
-        network: result.network,
+        chainId: result.chainId,
         rootWalletId: result.rootWalletId,
         keyWalletId: result.keyWalletId,
         keyType: result.keyType ?? null,
-        chainId: result.chainId,
         expiry: result.expiry ?? null,
         limits: result.limits,
         status: result.status,

@@ -1,13 +1,9 @@
 import { db } from '@/db';
 import * as authSchema from '@/db/schema/auth';
-import { accessKeys } from '@/db/schema/business';
 
-// Alias business schema's accessKeys for tempo plugin compatibility
-const schema = {
-  ...authSchema,
-  accessKey: accessKeys,
-};
+const schema = authSchema;
 import { BACKEND_WALLET_ADDRESSES } from '@/lib/tempo/constants';
+import { getChainId } from '@/lib/network';
 import { betterAuth } from 'better-auth';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { createAuthMiddleware } from 'better-auth/api';
@@ -63,15 +59,15 @@ export const auth = betterAuth({
       },
 
       // Backend wallet for Access Key authorization (Turnkey HSM-backed)
-      // Creates a shared server wallet record on initialization
+      // Must be manually inserted into wallet table (see tempo-plugin/README.md)
       serverWallet: {
         address: BACKEND_WALLET_ADDRESSES.testnet,
         keyType: 'secp256k1',
         label: 'GRIP Backend Signer',
       },
 
-      // Allow Tempo testnet only for now
-      allowedChainIds: [42429],
+      // Allow current network's chain ID
+      allowedChainIds: [getChainId()],
 
       // Default Access Key settings
       defaults: {

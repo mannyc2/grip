@@ -1,4 +1,4 @@
-import { tempoTestnet } from 'viem/chains';
+import { getChainId } from '@/lib/network';
 
 /**
  * Tempo blockchain configuration
@@ -9,15 +9,15 @@ import { tempoTestnet } from 'viem/chains';
  * - Fees paid in USD stablecoins (any TIP-20 with currency="USD")
  * - Payment lane for guaranteed low-cost TIP-20 transfers
  * - Passkey (P256) authentication native support
- *
- * Chain config (id, rpcUrls, blockExplorers) comes from viem/chains.
  */
 
-/** Re-export for convenience - prefer importing directly from viem/chains */
-export { tempoTestnet };
+/** Tempo block explorer URL (same for testnet and mainnet) */
+export const TEMPO_EXPLORER_URL = 'https://explore.tempo.xyz';
 
 /** Official Tempo tokenlist for fee token selection and token discovery */
-export const TEMPO_TOKENLIST_URL = 'https://tempoxyz.github.io/tempo-apps/42429/tokenlist.json';
+export function getTokenlistUrl(): string {
+  return `https://tempoxyz.github.io/tempo-apps/${getChainId()}/tokenlist.json`;
+}
 
 /**
  * GRIP backend wallet addresses (Turnkey HSM-backed)
@@ -37,6 +37,5 @@ export const BACKEND_WALLET_ADDRESSES = {
  * Generate explorer URL for a transaction
  */
 export function getExplorerTxUrl(txHash: string): string {
-  const explorerUrl = tempoTestnet.blockExplorers?.default.url ?? 'https://explore.tempo.xyz';
-  return `${explorerUrl}/tx/${txHash}`;
+  return `${TEMPO_EXPLORER_URL}/tx/${txHash}`;
 }

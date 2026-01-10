@@ -26,9 +26,12 @@ export function LoginForm() {
     setIsLoading(true);
     setError(null);
     try {
+      const redirectTo =
+        searchParams.get('callbackUrl') || searchParams.get('redirect') || '/explore';
+
       await signIn.social({
         provider: 'github',
-        callbackURL: '/explore',
+        callbackURL: redirectTo,
       });
     } catch (err) {
       setError('Failed to sign in with GitHub');
@@ -52,7 +55,8 @@ export function LoginForm() {
         throw new Error(result.error.message || 'Authentication failed');
       }
 
-      router.push(redirectTo);
+      // Use replace to close the modal and navigate (push keeps modal open)
+      router.replace(redirectTo);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sign in with passkey');
       console.error(err);

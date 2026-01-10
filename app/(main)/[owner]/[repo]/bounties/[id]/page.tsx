@@ -65,7 +65,7 @@ export default async function BountyPage({ params }: BountyPageProps) {
   // BigInt fields are serialized to strings for JSON compatibility
   const bounty: Bounty = {
     id: bountyData.id,
-    network: bountyData.network,
+    chainId: bountyData.chainId,
     githubRepoId: bountyData.githubRepoId.toString(),
     githubOwner: bountyData.githubOwner,
     githubRepo: bountyData.githubRepo,

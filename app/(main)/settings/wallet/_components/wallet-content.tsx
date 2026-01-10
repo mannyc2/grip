@@ -1,8 +1,8 @@
 'use client';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { authClient } from '@/lib/auth/auth-client';
-import { useEffect, useState } from 'react';
+import { usePasskeys } from '@/lib/auth/auth-client';
+import { useMemo } from 'react';
 import { PasskeyManager } from '../../_components/passkey-manager';
 import { type ActivityStats, StatsRow } from './stats-row';
 import { WalletHero } from './wallet-hero';
@@ -22,48 +22,25 @@ export interface WalletContentProps {
 }
 
 export function WalletContent({ stats, isModal = false }: WalletContentProps) {
-  const [wallet, setWallet] = useState<Wallet | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  // Use nanostore hook - auto-updates when passkeys are created/deleted
+  const { data: passkeys, isPending: isLoading } = usePasskeys();
 
-  useEffect(() => {
-    async function fetchWallet() {
-      setIsLoading(true);
-      try {
-        // Fetch both wallets and passkeys to get credentialID for deletion
-        const [walletsRes, passkeysRes] = await Promise.all([
-          authClient.listWallets(),
-          authClient.listTempoPasskeys(),
-        ]);
+  // Derive wallet from passkeys data
+  const wallet = useMemo<Wallet | null>(() => {
+    if (!passkeys || passkeys.length === 0) return null;
 
-        const passkeyWallet = walletsRes.data?.wallets.find((w) => w.walletType === 'passkey');
-        const passkeys = passkeysRes.data ?? [];
+    // Get the first passkey with an address (user's primary wallet)
+    const passkey = passkeys.find((p) => p.tempoAddress);
+    if (!passkey) return null;
 
-        if (passkeyWallet?.address && passkeyWallet.passkeyId) {
-          // Find the passkey to get its credentialID
-          const passkey = passkeys.find((p) => p.id === passkeyWallet.passkeyId);
-          if (passkey) {
-            setWallet({
-              id: passkey.id,
-              credentialID: passkey.credentialID,
-              name: passkey.name ?? passkeyWallet.label ?? null,
-              tempoAddress: passkeyWallet.address as `0x${string}`,
-              createdAt: passkey.createdAt ?? new Date().toISOString(),
-            });
-          } else {
-            setWallet(null);
-          }
-        } else {
-          setWallet(null);
-        }
-      } catch (err) {
-        console.error('Failed to fetch wallet:', err);
-        setWallet(null);
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    fetchWallet();
-  }, []);
+    return {
+      id: passkey.id,
+      credentialID: passkey.credentialID,
+      name: passkey.name,
+      tempoAddress: passkey.tempoAddress as `0x${string}`,
+      createdAt: passkey.createdAt ?? new Date().toISOString(),
+    };
+  }, [passkeys]);
 
   if (isLoading) {
     return (

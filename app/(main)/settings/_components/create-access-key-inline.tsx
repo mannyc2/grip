@@ -6,8 +6,7 @@ import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { PasskeyOperationContent } from '@/components/tempo';
 import { authClient } from '@/lib/auth/auth-client';
-import { getCurrentNetwork } from '@/db/network';
-import { BACKEND_WALLET_ADDRESSES } from '@/lib/tempo/constants';
+import { getChainId } from '@/lib/network';
 import { config } from '@/lib/wagmi-config';
 import type { PasskeyOperationError, PasskeyPhase } from '@/lib/webauthn';
 import type { AccessKey } from '@/lib/auth/tempo-plugin/types';
@@ -36,14 +35,10 @@ export function CreateAccessKeyInline({
     setPhase('signing');
 
     try {
-      const network = getCurrentNetwork();
-      const backendWalletAddress = BACKEND_WALLET_ADDRESSES[network];
       const limitAmount = BigInt(spendingLimit) * BigInt(1_000_000);
 
       // Get user's passkey wallet
-      const { data: walletsData, error: walletError } = await authClient.listWallets();
-      const passkeyWallet = walletsData?.wallets.find((w) => w.walletType === 'passkey');
-
+      const { data: passkeyWallet, error: walletError } = await authClient.getPasskeyWallet();
       if (walletError || !passkeyWallet) {
         setError({
           type: 'wallet_not_found',
@@ -54,11 +49,25 @@ export function CreateAccessKeyInline({
         return;
       }
 
+      // Get server wallet for authorization
+      const { data: serverWalletData, error: serverError } = await authClient.getServerWallet();
+      if (serverError || !serverWalletData?.wallet) {
+        setError({
+          type: 'operation_failed',
+          message: 'Server wallet not configured. Please contact support.',
+          phase: 'connect',
+        });
+        setPhase('error');
+        return;
+      }
+      const serverWallet = serverWalletData.wallet;
+
       // Sign authorization using tempo plugin
       const { data: signResult, error: signError } = await authClient.signKeyAuthorization({
         config,
+        chainId: getChainId(),
         keyType: 'secp256k1',
-        address: backendWalletAddress,
+        address: serverWallet.address as `0x${string}`,
         limits: [{ token: tokenAddress, amount: limitAmount }],
       });
 
@@ -76,8 +85,8 @@ export function CreateAccessKeyInline({
       setPhase('processing');
       const { data, error: createError } = await authClient.createAccessKey({
         rootWalletId: passkeyWallet.id,
-        keyWalletAddress: backendWalletAddress,
-        chainId: 42429,
+        keyWalletAddress: serverWallet.address as `0x${string}`,
+        chainId: getChainId(),
         limits: [{ token: tokenAddress, limit: limitAmount.toString() }],
         authorizationSignature: signResult.signature,
         authorizationHash: signResult.hash,

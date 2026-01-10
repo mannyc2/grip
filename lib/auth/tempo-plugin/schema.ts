@@ -194,15 +194,15 @@ export const getSchema = (options?: TempoPluginConfig) => {
           required: false,
         },
         revokedAt: {
-          type: 'date' as const,
+          type: 'string' as const,
           required: false,
         },
         createdAt: {
-          type: 'date' as const,
-          required: true,
+          type: 'string' as const,
+          required: false,
         },
         updatedAt: {
-          type: 'date' as const,
+          type: 'string' as const,
           required: false,
         },
         ...(options?.schema?.accessKey?.additionalFields || {}),

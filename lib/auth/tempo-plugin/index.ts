@@ -7,7 +7,7 @@
  * Features:
  * - Automatic Tempo address derivation from WebAuthn passkeys
  * - Access Key management for delegated signing
- * - KeyManager endpoints for Tempo SDK integration
+ * - Passkey endpoints with publicKeyHex for wagmi KeyManager integration
  */
 
 import type { BetterAuthPlugin } from 'better-auth';
@@ -17,18 +17,14 @@ import {
   createWallet,
   deletePasskey,
   getAccessKey,
-  getChallenge,
   getPasskeyAuthenticationOptions,
   getPasskeyRegistrationOptions,
-  getPublicKey,
   getServerWallet,
   getWallet,
   listAccessKeys,
-  listKeys,
   listTempoPasskeys,
   listWallets,
   revokeAccessKey,
-  setPublicKey,
   verifyPasskeyAuthentication,
   verifyPasskeyRegistration,
 } from './routes';
@@ -67,7 +63,7 @@ declare module 'better-auth' {
  *         address: '0x...',
  *         keyType: 'secp256k1',
  *       },
- *       allowedChainIds: [42429],
+ *       allowedChainIds: [42431], // Moderato testnet
  *     }),
  *   ],
  * });
@@ -94,13 +90,8 @@ export const tempo = (config: TempoPluginConfig) => {
       getPasskeyAuthenticationOptions: getPasskeyAuthenticationOptions(config),
       verifyPasskeyAuthentication: verifyPasskeyAuthentication(config),
       deletePasskey,
-      // Passkey list endpoint
+      // Passkey list endpoint (includes publicKeyHex for wagmi KeyManager)
       listTempoPasskeys,
-      // KeyManager endpoints (SDK compatibility)
-      getChallenge: getChallenge(config),
-      getPublicKey,
-      setPublicKey: setPublicKey(config),
-      listKeys,
     },
     $ERROR_CODES: TEMPO_ERROR_CODES,
     options: config,

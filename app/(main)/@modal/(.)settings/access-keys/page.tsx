@@ -14,16 +14,10 @@ export default async function AccessKeysModal() {
   const passkeyWallet = wallets.find((w) => w.walletType === 'passkey') ?? null;
 
   if (!passkeyWallet) {
-    return <AccessKeysContent hasWallet={false} accessKeys={[]} walletAddress={null} />;
+    return <AccessKeysContent hasWallet={false} accessKeys={[]} />;
   }
 
   const { accessKeys } = await auth.api.listAccessKeys({ headers: headersList });
 
-  return (
-    <AccessKeysContent
-      hasWallet={true}
-      accessKeys={accessKeys}
-      walletAddress={passkeyWallet.address as `0x${string}`}
-    />
-  );
+  return <AccessKeysContent hasWallet={true} accessKeys={accessKeys} />;
 }

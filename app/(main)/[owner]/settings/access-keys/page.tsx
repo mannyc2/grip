@@ -1,12 +1,8 @@
 import { getActiveAccessKey } from '@/db/queries/access-keys';
-import {
-  getOrgBySlug,
-  getOrgMembership,
-  getOrgMembersWithUsers,
-  getOrgAccessKeys,
-} from '@/db/queries/organizations';
-import { getPasskeysByUser } from '@/db/queries/passkeys';
+import { getOrgMembersWithUsers, getOrgAccessKeys } from '@/db/queries/organizations';
+import { auth } from '@/lib/auth/auth';
 import { getSession } from '@/lib/auth/auth-server';
+import { headers } from 'next/headers';
 import { notFound, redirect } from 'next/navigation';
 import { AccessKeysContent } from '../_components/access-keys-content';
 import type { OrgRole } from '../_lib/types';
@@ -30,12 +26,17 @@ export default async function AccessKeysPage({ params }: AccessKeysPageProps) {
     redirect(`/login?callbackUrl=/${owner}/settings/access-keys`);
   }
 
-  const org = await getOrgBySlug(owner);
-  if (!org) {
+  const headersList = await headers();
+  const result = await auth.api.getFullOrganization({
+    headers: headersList,
+    query: { organizationSlug: owner },
+  });
+
+  if (!result) {
     notFound();
   }
 
-  const membership = await getOrgMembership(org.id, session.user.id);
+  const membership = result.members.find((m) => m.userId === session.user.id);
   if (!membership) {
     notFound();
   }
@@ -45,22 +46,18 @@ export default async function AccessKeysPage({ params }: AccessKeysPageProps) {
     redirect(`/${owner}/settings`);
   }
 
-  const [ownerAccessKey, orgAccessKeys, members, passkeys] = await Promise.all([
+  const [ownerAccessKey, orgAccessKeys, members] = await Promise.all([
     getActiveAccessKey(session.user.id),
-    getOrgAccessKeys(org.id),
-    getOrgMembersWithUsers(org.id),
-    getPasskeysByUser(session.user.id),
+    getOrgAccessKeys(result.id),
+    getOrgMembersWithUsers(result.id),
   ]);
-
-  const walletPasskey = passkeys.find((p) => p.wallet?.address) ?? null;
 
   return (
     <AccessKeysContent
       ownerHasAccessKey={!!ownerAccessKey}
       orgAccessKeys={orgAccessKeys ?? []}
       members={members}
-      organizationId={org.id}
-      walletAddress={(walletPasskey?.wallet?.address ?? null) as `0x${string}` | null}
+      organizationId={result.id}
     />
   );
 }

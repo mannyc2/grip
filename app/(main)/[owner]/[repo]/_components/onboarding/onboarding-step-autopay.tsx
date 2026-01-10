@@ -6,8 +6,7 @@ import { DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/di
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { authClient } from '@/lib/auth/auth-client';
-import { getCurrentNetwork } from '@/db/network';
-import { BACKEND_WALLET_ADDRESSES } from '@/lib/tempo/constants';
+import { getChainId } from '@/lib/network';
 import { config } from '@/lib/wagmi-config';
 import { cn } from '@/lib/utils';
 import type { PasskeyOperationError, PasskeyPhase } from '@/lib/webauthn';
@@ -63,14 +62,10 @@ export function OnboardingStepAutopay({
       setError(null);
       setPhase('signing');
 
-      const network = getCurrentNetwork();
-      const backendWalletAddress = BACKEND_WALLET_ADDRESSES[network];
       const limitAmount = BigInt(spendingLimit) * BigInt(1_000_000);
 
       // Get user's passkey wallet
-      const { data: walletsData, error: walletError } = await authClient.listWallets();
-      const passkeyWallet = walletsData?.wallets.find((w) => w.walletType === 'passkey');
-
+      const { data: passkeyWallet, error: walletError } = await authClient.getPasskeyWallet();
       if (walletError || !passkeyWallet) {
         setError({
           type: 'wallet_not_found',
@@ -81,11 +76,25 @@ export function OnboardingStepAutopay({
         return;
       }
 
+      // Get server wallet for authorization
+      const { data: serverWalletData, error: serverError } = await authClient.getServerWallet();
+      if (serverError || !serverWalletData?.wallet) {
+        setError({
+          type: 'operation_failed',
+          message: 'Server wallet not configured. Please contact support.',
+          phase: 'connect',
+        });
+        setPhase('error');
+        return;
+      }
+      const serverWallet = serverWalletData.wallet;
+
       // Sign authorization using tempo plugin
       const { data: signResult, error: signError } = await authClient.signKeyAuthorization({
         config,
+        chainId: getChainId(),
         keyType: 'secp256k1',
-        address: backendWalletAddress,
+        address: serverWallet.address as `0x${string}`,
         limits: [{ token: tokenAddress, amount: limitAmount }],
       });
 
@@ -103,8 +112,8 @@ export function OnboardingStepAutopay({
       setPhase('processing');
       const { error: createError } = await authClient.createAccessKey({
         rootWalletId: passkeyWallet.id,
-        keyWalletAddress: backendWalletAddress,
-        chainId: 42429,
+        keyWalletAddress: serverWallet.address as `0x${string}`,
+        chainId: getChainId(),
         limits: [{ token: tokenAddress, limit: limitAmount.toString() }],
         authorizationSignature: signResult.signature,
         authorizationHash: signResult.hash,

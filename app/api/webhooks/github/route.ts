@@ -122,7 +122,7 @@ async function tryAutoPayOnMerge(params: {
 
     // Get nonce and sign transaction
     const { tempoClient } = await import('@/lib/tempo/client');
-    const { getNetworkForInsert } = await import('@/db/network');
+    const { getNetworkName } = await import('@/db/network');
     const { signTransactionWithAccessKey, broadcastTransaction } = await import(
       '@/lib/tempo/keychain-signing'
     );
@@ -142,7 +142,7 @@ async function tryAutoPayOnMerge(params: {
         nonce,
       },
       funderAddress: funderWallet.address as `0x${string}`,
-      network: getNetworkForInsert() as 'testnet' | 'mainnet',
+      network: getNetworkName(),
     });
 
     // Broadcast transaction

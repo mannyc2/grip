@@ -339,7 +339,8 @@ export interface PasskeyWithAddress {
   name: string | null;
   credentialID: string;
   publicKey: string;
-  tempoAddress: string; // Derived from publicKey
+  publicKeyHex: `0x${string}`; // Raw P-256 coordinates (x || y) for wagmi KeyManager
+  tempoAddress: `0x${string}`; // Derived from publicKey
   createdAt: string;
 }
 

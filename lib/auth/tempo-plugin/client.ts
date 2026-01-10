@@ -27,46 +27,117 @@ import type {
   DeletePasskeyResponse,
   GetAccessKeyResponse,
   GetWalletResponse,
-  KeyManagerKey,
   ListAccessKeysResponse,
   ListWalletsResponse,
-  LoadKeyResponse,
   PasskeyWithAddress,
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
   RegisterPasskeyResponse,
+  RegistrationResponseJSON,
   RevokeAccessKeyRequest,
   RevokeAccessKeyResponse,
-  SaveKeyResponse,
-  SetPublicKeyRequest,
   Wallet,
 } from './types';
 
-/**
- * Simple KeyManager using HTTP endpoints
- *
- * Uses KeyManager.http for basic integration. For better cookie handling
- * with better-auth, use createTempoKeyManager instead.
- */
-export const tempoKeyManager = KeyManager.http('/api/auth/tempo/keymanager');
+// ============================================================================
+// KEYMANAGER HELPERS
+// ============================================================================
 
 /**
- * Helper to convert browser's ArrayBuffer to base64url string
+ * Convert base64url string to bytes
  */
-function arrayBufferToBase64url(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function base64urlToBytes(base64url: string): Uint8Array {
+  const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+  const bin = atob(padded);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
 /**
- * KeyManager for Tempo SDK WebAuthn connector
+ * Convert bytes to hex string
+ */
+function bytesToHex(bytes: Uint8Array): `0x${string}` {
+  let hex = '0x';
+  for (let i = 0; i < bytes.length; i++) hex += bytes[i]!.toString(16).padStart(2, '0');
+  return hex as `0x${string}`;
+}
+
+/**
+ * Convert browser's PublicKeyCredential to RegistrationResponseJSON.
+ * Prefer native toJSON() when available, fallback to manual conversion.
+ */
+function toRegistrationResponseJSON(credential: PublicKeyCredential): RegistrationResponseJSON {
+  // Modern browsers implement toJSON() on PublicKeyCredential
+  if ('toJSON' in credential && typeof credential.toJSON === 'function') {
+    const json = credential.toJSON() as RegistrationResponseJSON;
+    // Ensure transports are included (some implementations omit them)
+    if (!json?.response?.transports) {
+      const response = credential.response as AuthenticatorAttestationResponse;
+      if (response.getTransports) {
+        // Cast string[] to AuthenticatorTransport[] - browser API returns strings
+        json.response.transports = response.getTransports() as RegistrationResponseJSON['response']['transports'];
+      }
+    }
+    return json;
+  }
+
+  // Fallback: manual ArrayBuffer -> base64url conversion
+  const response = credential.response as AuthenticatorAttestationResponse;
+
+  const abToB64url = (buffer: ArrayBuffer) => {
+    const bytes = new Uint8Array(buffer);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+    return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  };
+
+  return {
+    id: credential.id,
+    rawId: credential.id,
+    type: 'public-key',
+    clientExtensionResults: credential.getClientExtensionResults?.() ?? {},
+    response: {
+      clientDataJSON: abToB64url(response.clientDataJSON),
+      attestationObject: abToB64url(response.attestationObject),
+      transports: response.getTransports?.() as RegistrationResponseJSON['response']['transports'],
+    },
+  } as RegistrationResponseJSON;
+}
+
+// ============================================================================
+// KEYMANAGER FACTORY
+// ============================================================================
+
+/**
+ * Type for the minimal authClient interface needed by createTempoKeyManager.
+ * better-auth flattens plugin actions onto the authClient directly (not under a namespace).
+ */
+interface TempoKeyManagerAuthClient {
+  getPasskeyRegistrationOptions: () => Promise<{
+    data: PublicKeyCredentialCreationOptionsJSON | null;
+    error: { message?: string } | null;
+  }>;
+  listTempoPasskeys: () => Promise<{
+    data: PasskeyWithAddress[] | null;
+    error: { message?: string } | null;
+  }>;
+  verifyPasskeyRegistrationRaw: (params: {
+    response: RegistrationResponseJSON;
+    name?: string;
+  }) => Promise<{
+    data: RegisterPasskeyResponse | null;
+    error: { message?: string } | null;
+  }>;
+}
+
+/**
+ * KeyManager for wagmi WebAuthn connector
  *
- * Factory that creates a KeyManager using better-auth client actions.
- * This ensures consistent cookie handling and type safety.
+ * Factory that creates a KeyManager using better-auth passkey endpoints.
+ * Uses `/tempo/passkey/register-options` for challenges and `/tempo/passkeys`
+ * for public key lookups - no separate keymanager endpoints needed.
  *
  * @example
  * ```typescript
@@ -79,44 +150,58 @@ function arrayBufferToBase64url(buffer: ArrayBuffer): string {
  * webAuthn({ keyManager });
  * ```
  */
-export function createTempoKeyManager(authClient: {
-  tempo: ReturnType<typeof getTempoActions>;
-}) {
+export function createTempoKeyManager(authClient: TempoKeyManagerAuthClient) {
   return KeyManager.from({
+    /**
+     * Get challenge for wagmi sign-up flow.
+     * Reuses the passkey registration options endpoint which sets the challenge cookie.
+     */
     async getChallenge() {
-      const { data, error } = await authClient.tempo.getChallenge();
-      if (error || !data) {
-        throw new Error(error?.message ?? 'Failed to get challenge');
+      const { data: options, error } = await authClient.getPasskeyRegistrationOptions();
+      if (error || !options) {
+        throw new Error(error?.message ?? 'Failed to get registration options');
       }
-      return data;
-    },
 
-    async getPublicKey({ credential }) {
-      const { data, error } = await authClient.tempo.loadKey(credential.id);
-      if (error || !data) {
-        throw new Error(error?.message ?? 'Public key not found');
-      }
-      return data.publicKey as `0x${string}`;
-    },
-
-    async setPublicKey({ credential, publicKey }) {
-      // Convert browser's PublicKeyCredential to our API format (base64url strings)
-      const response = credential.response as AuthenticatorAttestationResponse;
-      const credentialRaw = {
-        id: credential.id,
-        response: {
-          clientDataJSON: arrayBufferToBase64url(response.clientDataJSON),
-          attestationObject: arrayBufferToBase64url(response.attestationObject),
-          transports: response.getTransports?.() as string[] | undefined,
-        },
+      // Convert challenge from base64url to hex for wagmi
+      const challengeHex = bytesToHex(base64urlToBytes(options.challenge));
+      return {
+        challenge: challengeHex,
+        rp: options.rp?.id ? { id: options.rp.id, name: options.rp.name ?? options.rp.id } : undefined,
       };
+    },
 
-      const { error } = await authClient.tempo.saveKey(credential.id, {
-        credential: credentialRaw,
-        publicKey,
+    /**
+     * Get public key for wagmi connect/sign-in flow.
+     * Looks up the passkey by credential ID and returns the hex public key.
+     */
+    async getPublicKey({ credential }) {
+      const { data, error } = await authClient.listTempoPasskeys();
+      if (error || !data) {
+        throw new Error(error?.message ?? 'Failed to list passkeys');
+      }
+
+      const match = data.find((p) => p.credentialID === credential.id);
+      if (!match?.publicKeyHex) {
+        throw new Error('Public key not found for credential');
+      }
+
+      return match.publicKeyHex;
+    },
+
+    /**
+     * Save public key after wagmi sign-up ceremony.
+     * Reuses the passkey registration verification endpoint.
+     */
+    async setPublicKey({ credential }) {
+      // Cast to standard PublicKeyCredential - wagmi's ox uses a compatible but separate type
+      const responseJson = toRegistrationResponseJSON(credential as unknown as PublicKeyCredential);
+
+      const { error } = await authClient.verifyPasskeyRegistrationRaw({
+        response: responseJson,
       });
+
       if (error) {
-        throw new Error(error.message ?? 'Failed to save public key');
+        throw new Error(error?.message ?? 'Failed to verify registration');
       }
     },
   });
@@ -128,6 +213,7 @@ export function createTempoKeyManager(authClient: {
 
 export interface SignKeyAuthorizationParams {
   config: Config;
+  chainId: number;
   keyType: 'secp256k1' | 'webAuthn';
   address: `0x${string}`;
   limits: { token: `0x${string}`; amount: bigint }[];
@@ -435,46 +521,26 @@ export const getTempoActions = (
     });
   };
 
-  // KeyManager (Tempo SDK integration)
-  const listKeys = async () => {
-    return $fetch<KeyManagerKey[]>('/tempo/keymanager', {
-      method: 'GET',
-    });
-  };
-
   /**
-   * Get WebAuthn challenge for SDK registration flow
+   * Low-level passkey verification (for wagmi KeyManager integration)
    *
-   * Returns challenge (hex) and RP info for client-side WebAuthn ceremony.
-   * Challenge is stored server-side for validation in saveKey.
+   * Verifies WebAuthn registration and creates passkey + wallet atomically.
+   * Use this when wagmi performs the ceremony and you need to verify the result.
+   *
+   * @param params - Contains the RegistrationResponseJSON from WebAuthn ceremony
    */
-  const getChallenge = async () => {
-    return $fetch<{ challenge: `0x${string}`; rp: { id: string; name: string } }>(
-      '/tempo/keymanager/challenge',
-      { method: 'GET' }
-    );
-  };
-
-  const loadKey = async (credentialId: string) => {
-    return $fetch<LoadKeyResponse>(`/tempo/keymanager/${credentialId}`, {
-      method: 'GET',
-    });
-  };
-
-  /**
-   * Save public key after WebAuthn registration
-   *
-   * SECURITY: Server extracts and validates public key from credential.attestationObject.
-   * The publicKey field in params is IGNORED by the server.
-   *
-   * @param credentialId - The credential ID from WebAuthn response
-   * @param params - Must include credential with attestationObject from WebAuthn ceremony
-   */
-  const saveKey = async (credentialId: string, params: SetPublicKeyRequest) => {
-    return $fetch<SaveKeyResponse>(`/tempo/keymanager/${credentialId}`, {
+  const verifyPasskeyRegistrationRaw = async (params: {
+    response: RegistrationResponseJSON;
+    name?: string;
+  }) => {
+    const res = await $fetch<RegisterPasskeyResponse>('/tempo/passkey/register', {
       method: 'POST',
       body: params,
+      throw: false,
     });
+
+    if (res.data) bump($passkeysSignal);
+    return res;
   };
 
   /**
@@ -483,9 +549,12 @@ export const getTempoActions = (
    * Handles wagmi connection if needed, builds the authorization struct,
    * and prompts the user for passkey signature.
    *
+   * @param params.chainId - Chain ID for the authorization (validated server-side against allowedChainIds)
+   *
    * @example
    * const { data, error } = await authClient.signKeyAuthorization({
    *   config,
+   *   chainId: 42431, // Tempo testnet
    *   keyType: 'secp256k1',
    *   address: backendWalletAddress,
    *   limits: [{ token: tokenAddress, amount: BigInt(1000) * BigInt(1_000_000) }],
@@ -495,7 +564,7 @@ export const getTempoActions = (
     params: SignKeyAuthorizationParams
   ): Promise<{ data: SignKeyAuthorizationResponse | null; error: Error | null }> => {
     try {
-      const { config, keyType, address, limits, expiry } = params;
+      const { config, chainId, keyType, address, limits, expiry } = params;
 
       // Connect if not connected
       const connections = getConnections(config);
@@ -512,7 +581,7 @@ export const getTempoActions = (
 
       // Build authorization struct
       const authorization = KeyAuthorization.from({
-        chainId: BigInt(42429),
+        chainId: BigInt(chainId),
         type: keyType,
         address,
         limits: limits.map((l) => ({ token: l.token, limit: l.amount })),
@@ -553,11 +622,7 @@ export const getTempoActions = (
     authenticateWithPasskey,
     deletePasskey,
     listTempoPasskeys,
-    // KeyManager
-    getChallenge,
-    listKeys,
-    loadKey,
-    saveKey,
+    verifyPasskeyRegistrationRaw,
     // Signing
     signKeyAuthorization,
   };

@@ -25,7 +25,7 @@ interface WalletRecord {
  */
 describe('tempo plugin', async () => {
   const tempoPlugin = tempo({
-    allowedChainIds: [42429],
+    allowedChainIds: [42431],
     defaults: {
       accessKeyLabel: 'Test Access Key',
     },
@@ -283,7 +283,7 @@ describe('tempo plugin', async () => {
         body: {
           rootWalletId: rootWallet.id,
           keyWalletId: keyWallet.id,
-          chainId: 42429,
+          chainId: 42431,
           limits: [{ token: '0xTOKEN00000000000000000000000000000000001', limit: '1000000000' }],
           authorizationSignature: '0xmocksignature',
           authorizationHash: '0xmockhash',
@@ -295,7 +295,7 @@ describe('tempo plugin', async () => {
       expect(result).toHaveProperty('rootWallet');
       expect(result).toHaveProperty('keyWallet');
       expect(result.accessKey.status).toBe('active');
-      expect(result.accessKey.chainId).toBe(42429);
+      expect(result.accessKey.chainId).toBe(42431);
       expect(result.accessKey.rootWalletId).toBe(rootWallet.id);
       expect(result.accessKey.keyWalletId).toBe(keyWallet.id);
     });
@@ -308,7 +308,7 @@ describe('tempo plugin', async () => {
         body: {
           rootWalletId: rootWallet.id,
           keyWalletAddress: keyWallet.address as `0x${string}`,
-          chainId: 42429,
+          chainId: 42431,
           authorizationSignature: '0xmocksignature2',
           authorizationHash: '0xmockhash2',
         },
@@ -370,7 +370,7 @@ describe('tempo plugin', async () => {
           body: {
             rootWalletId: otherWallet.id,
             keyWalletId: keyWallet.id,
-            chainId: 42429,
+            chainId: 42431,
             authorizationSignature: '0xmocksig',
             authorizationHash: '0xmockhash',
           },
@@ -415,7 +415,7 @@ describe('tempo plugin', async () => {
         body: {
           rootWalletId: rootWallet.id,
           keyWalletId: keyWallet.id,
-          chainId: 42429,
+          chainId: 42431,
           authorizationSignature: '0xsig-for-get',
           authorizationHash: '0xhash-for-get',
         },
@@ -450,7 +450,7 @@ describe('tempo plugin', async () => {
         body: {
           rootWalletId: rootWallet.id,
           keyWalletId: keyWallet.id,
-          chainId: 42429,
+          chainId: 42431,
           authorizationSignature: '0xsig-to-revoke',
           authorizationHash: '0xhash-to-revoke',
         },
@@ -475,7 +475,7 @@ describe('tempo plugin', async () => {
         body: {
           rootWalletId: rootWallet.id,
           keyWalletId: keyWallet.id,
-          chainId: 42429,
+          chainId: 42431,
           authorizationSignature: '0xsig-double-revoke',
           authorizationHash: '0xhash-double-revoke',
         },
@@ -697,7 +697,7 @@ describe('tempo plugin', async () => {
           body: {
             rootWalletId: 'test',
             keyWalletId: 'test',
-            chainId: 42429,
+            chainId: 42431,
             authorizationSignature: '0x',
             authorizationHash: '0x',
           },

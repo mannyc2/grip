@@ -20,16 +20,17 @@ import { formatTimeAgo } from '@/lib/utils';
 import { ExternalLink, HelpCircle, Key, Plus, User } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
-import { Hooks } from 'wagmi/tempo';
 import type { OrgAccessKey, OrgMember } from '../_lib/types';
 import { CreateOrgAccessKeyModal } from './create-org-access-key-modal';
+
+// Default token for access key spending limits (alphaUSD on Moderato testnet)
+const DEFAULT_LIMIT_TOKEN = '0x20c0000000000000000000000000000000000001' as `0x${string}`;
 
 interface AccessKeysContentProps {
   ownerHasAccessKey: boolean;
   orgAccessKeys: OrgAccessKey[];
   members: OrgMember[];
   organizationId: string;
-  walletAddress: `0x${string}` | null;
 }
 
 /**
@@ -44,7 +45,6 @@ export function AccessKeysContent({
   orgAccessKeys,
   members,
   organizationId,
-  walletAddress,
 }: AccessKeysContentProps) {
   // If owner hasn't set up their access key yet, show setup prompt
   if (!ownerHasAccessKey) {
@@ -57,7 +57,6 @@ export function AccessKeysContent({
       orgAccessKeys={orgAccessKeys}
       members={members}
       organizationId={organizationId}
-      walletAddress={walletAddress}
     />
   );
 }
@@ -100,7 +99,6 @@ interface DelegationUIProps {
   orgAccessKeys: OrgAccessKey[];
   members: OrgMember[];
   organizationId: string;
-  walletAddress: `0x${string}` | null;
 }
 
 /**
@@ -110,50 +108,14 @@ function DelegationUI({
   orgAccessKeys,
   members,
   organizationId,
-  walletAddress,
 }: DelegationUIProps) {
   const [localKeys, setLocalKeys] = useState(orgAccessKeys);
   const [keyToRevoke, setKeyToRevoke] = useState<OrgAccessKey | null>(null);
   const [isRevoking, setIsRevoking] = useState(false);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
-  // Get owner's fee token preference for access key limits
-  const { data: userFeeToken, isLoading: isLoadingFeeToken } = Hooks.fee.useUserToken({
-    account: walletAddress ?? '0x0000000000000000000000000000000000000000',
-    query: { enabled: Boolean(walletAddress) },
-  });
-  const tokenAddress = userFeeToken?.address as `0x${string}` | undefined;
-  const hasToken = Boolean(tokenAddress);
-
   const activeKeys = localKeys.filter((k) => k.status === 'active');
   const revokedKeys = localKeys.filter((k) => k.status === 'revoked');
-
-  // Fee token required before creating access keys for team members
-  if (!isLoadingFeeToken && !hasToken) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Team Spending Access</CardTitle>
-          <CardDescription>Authorize team members to spend from the org wallet</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Empty className="py-8">
-            <EmptyMedia variant="icon">
-              <Key />
-            </EmptyMedia>
-            <EmptyTitle>Fee Token Required</EmptyTitle>
-            <EmptyDescription>
-              The organization owner needs to set a fee token in their{' '}
-              <Link href="/settings/wallet" className="text-primary hover:underline">
-                wallet settings
-              </Link>{' '}
-              before authorizing team members.
-            </EmptyDescription>
-          </Empty>
-        </CardContent>
-      </Card>
-    );
-  }
 
   const handleRevoke = async () => {
     if (!keyToRevoke) return;
@@ -302,17 +264,14 @@ function DelegationUI({
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Create Org Access Key Modal - tokenAddress is defined since we early-return when !hasToken */}
-      {tokenAddress && (
-        <CreateOrgAccessKeyModal
-          open={isCreateModalOpen}
-          onOpenChange={setIsCreateModalOpen}
-          onSuccess={handleCreateSuccess}
-          members={members}
-          organizationId={organizationId}
-          tokenAddress={tokenAddress}
-        />
-      )}
+      <CreateOrgAccessKeyModal
+        open={isCreateModalOpen}
+        onOpenChange={setIsCreateModalOpen}
+        onSuccess={handleCreateSuccess}
+        members={members}
+        organizationId={organizationId}
+        tokenAddress={DEFAULT_LIMIT_TOKEN}
+      />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 /**
  * Tempo Plugin Routes
  *
- * Endpoint definitions for Wallets, Access Keys, Passkeys, and KeyManager.
+ * Endpoint definitions for Wallets, Access Keys, and Passkeys.
  * All endpoints use the better-auth adapter pattern for database portability.
  */
 
@@ -33,7 +33,6 @@ import type {
   AccessKeyStatus,
   AuthenticatePasskeyRequest,
   AuthenticatePasskeyResponse,
-  ClientDataJSON,
   CreateAccessKeyRequest,
   CreateAccessKeyResponse,
   CreateWalletRequest,
@@ -41,14 +40,11 @@ import type {
   GetAccessKeyResponse,
   KeyType,
   ListAccessKeysResponse,
-  LoadKeyResponse,
   PasskeyRecord,
   PasskeyWithAddress,
   RegisterPasskeyRequest,
   RegisterPasskeyResponse,
   RevokeAccessKeyResponse,
-  SaveKeyResponse,
-  SetPublicKeyRequest,
   TempoPluginConfig,
   TokenLimit,
   Wallet,
@@ -112,417 +108,22 @@ export const listTempoPasskeys = createAuthEndpoint(
       sortBy: { field: 'createdAt', direction: 'desc' },
     });
 
-    // Derive tempoAddress from publicKey for each passkey
-    const passkeys: PasskeyWithAddress[] = rawPasskeys.map((p) => ({
-      id: p.id,
-      userId: p.userId,
-      name: p.name,
-      credentialID: p.credentialID,
-      publicKey: p.publicKey,
-      tempoAddress: deriveTempoAddress(p.publicKey),
-      createdAt: typeof p.createdAt === 'string' ? p.createdAt : p.createdAt.toISOString(),
-    }));
-
-    return ctx.json(passkeys, { status: 200 });
-  }
-);
-
-// ============================================================================
-// KEYMANAGER ENDPOINTS (Tempo SDK Integration)
-// ============================================================================
-
-/**
- * GET /tempo/keymanager/challenge - Get WebAuthn challenge for registration
- *
- * Returns a challenge and RP info for the SDK's WebAuthn connector.
- * The SDK uses this to initiate the WebAuthn ceremony client-side.
- *
- * Challenge format bridging:
- * - SDK expects hex format (0x...)
- * - Browser stores base64url in clientDataJSON
- * - verifyRegistrationResponse expects base64url
- * We store base64url internally, return hex to SDK.
- */
-export const getChallenge = (config: TempoPluginConfig) =>
-  createAuthEndpoint(
-    '/tempo/keymanager/challenge',
-    {
-      method: 'GET',
-      use: [sessionMiddleware],
-      metadata: {
-        openapi: {
-          operationId: 'getChallenge',
-          description: 'Get WebAuthn challenge for SDK registration',
-          responses: {
-            '200': {
-              description: 'Challenge generated successfully',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      challenge: { type: 'string', description: 'Hex-encoded challenge' },
-                      rp: {
-                        type: 'object',
-                        properties: {
-                          id: { type: 'string' },
-                          name: { type: 'string' },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    async (ctx) => {
-      const { session } = ctx.context;
-
-      // Generate random challenge (32 bytes)
-      const challengeBytes = crypto.getRandomValues(new Uint8Array(32));
-
-      // Convert to both formats:
-      // - Hex for SDK (0x...)
-      // - Base64url for verifyRegistrationResponse (matches clientDataJSON.challenge)
-      const challengeHex = `0x${Array.from(challengeBytes)
-        .map((b) => b.toString(16).padStart(2, '0'))
-        .join('')}` as `0x${string}`;
-      const challengeBase64url = isoBase64URL.fromBuffer(challengeBytes);
-
-      // Get RP config from passkey settings
-      const rpID = config.passkey?.rpID || 'localhost';
-      const rpName = config.passkey?.rpName || 'Tempo App';
-
-      // Store challenge using base64url as identifier (for lookup from clientDataJSON)
-      const challengeMaxAge = config.passkey?.challengeMaxAge || 300;
-
-      await ctx.context.internalAdapter.createVerificationValue({
-        identifier: `keymanager:${challengeBase64url}`,
-        value: JSON.stringify({
-          expectedChallenge: challengeBase64url,
-          userId: session.user.id,
-        }),
-        expiresAt: new Date(Date.now() + challengeMaxAge * 1000),
-      });
-
-      // Return hex format for SDK
-      return ctx.json({
-        challenge: challengeHex,
-        rp: {
-          id: rpID,
-          name: rpName,
-        },
-      });
-    }
-  );
-
-/**
- * GET /tempo/keymanager/:credentialId - Get public key for SDK
- *
- * Returns the public key and address for a passkey credential.
- * Used by Tempo SDK's KeyManager.http for transaction signing.
- */
-export const getPublicKey = createAuthEndpoint(
-  '/tempo/keymanager/:credentialId',
-  {
-    method: 'GET',
-    use: [sessionMiddleware],
-    metadata: {
-      openapi: {
-        operationId: 'getPublicKey',
-        description: 'Get public key for a passkey credential (Tempo SDK integration)',
-        responses: {
-          '200': {
-            description: 'Public key retrieved successfully',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    credentialId: { type: 'string' },
-                    publicKey: { type: 'string', description: 'Hex-encoded public key' },
-                    address: { type: 'string', description: 'Tempo blockchain address' },
-                  },
-                },
-              },
-            },
-          },
-          '404': {
-            description: 'Key not found',
-          },
-        },
-      },
-    },
-  },
-  async (ctx) => {
-    const { session } = ctx.context;
-
-    const credentialId = ctx.params?.credentialId;
-    if (!credentialId) {
-      throw new APIError('BAD_REQUEST', { message: TEMPO_ERROR_CODES.MISSING_CREDENTIAL_ID });
-    }
-
-    const passkeys = (await ctx.context.adapter.findMany({
-      model: 'passkey',
-      where: [
-        { field: 'userId', value: session.user.id },
-        { field: 'credentialID', value: credentialId },
-      ],
-      limit: 1,
-    })) as PasskeyRecord[];
-
-    const passkey = passkeys[0];
-    if (!passkey) {
-      throw new APIError('NOT_FOUND', { message: TEMPO_ERROR_CODES.KEY_NOT_FOUND });
-    }
-
-    // Handle both hex (from SDK KeyManager) and COSE base64 (from @simplewebauthn)
-    const publicKeyHex = getPublicKeyHex(passkey.publicKey);
-    const address = deriveTempoAddressFromHex(publicKeyHex);
-
-    return ctx.json({
-      credentialId: passkey.credentialID,
-      publicKey: publicKeyHex,
-      address,
-    } as LoadKeyResponse);
-  }
-);
-
-/**
- * POST /tempo/keymanager/:credentialId - Save public key and create wallet
- *
- * Creates passkey + wallet atomically from SDK's WebAuthn connector.
- * SECURITY: Uses verifyRegistrationResponse for full WebAuthn validation.
- * The client-sent publicKey field is IGNORED - we extract from attestationObject.
- */
-export const setPublicKey = (config: TempoPluginConfig) =>
-  createAuthEndpoint(
-    '/tempo/keymanager/:credentialId',
-    {
-      method: 'POST',
-      use: [sessionMiddleware],
-      metadata: {
-        openapi: {
-          operationId: 'setPublicKey',
-          description: 'Save public key and create wallet (Tempo SDK KeyManager)',
-          responses: {
-            '200': {
-              description: 'Passkey and wallet created successfully',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      success: { type: 'boolean' },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-    async (ctx) => {
-      const { session } = ctx.context;
-      const credentialId = ctx.params?.credentialId;
-
-      if (!credentialId) {
-        throw new APIError('BAD_REQUEST', { message: TEMPO_ERROR_CODES.MISSING_CREDENTIAL_ID });
-      }
-
-      // === STEP 1: Parse credential and extract challenge ===
-      // SDK sends { credential, publicKey } - we IGNORE publicKey
-      const body = ctx.body as SetPublicKeyRequest;
-
-      if (!body?.credential?.response?.attestationObject) {
-        throw new APIError('BAD_REQUEST', {
-          message: 'Invalid credential: missing attestationObject',
-        });
-      }
-
-      // Decode clientDataJSON to get the challenge for lookup
-      const clientDataBytes = isoBase64URL.toBuffer(body.credential.response.clientDataJSON);
-      const clientDataText = new TextDecoder().decode(clientDataBytes);
-      let clientData: ClientDataJSON;
-      try {
-        clientData = JSON.parse(clientDataText) as ClientDataJSON;
-      } catch {
-        throw new APIError('BAD_REQUEST', { message: 'Invalid clientDataJSON' });
-      }
-
-      // The challenge in clientDataJSON is base64url - use it to look up stored verification
-      const expectedChallenge = clientData.challenge;
-
-      // === STEP 2: Validate stored challenge exists and belongs to user ===
-      const stored = await ctx.context.internalAdapter.findVerificationValue(
-        `keymanager:${expectedChallenge}`
-      );
-
-      if (!stored) {
-        throw new APIError('BAD_REQUEST', {
-          message: 'Challenge not found or expired. Call getChallenge first.',
-        });
-      }
-
-      const { userId } = JSON.parse(stored.value);
-      if (userId !== session.user.id) {
-        throw new APIError('FORBIDDEN', { message: 'Challenge belongs to different user' });
-      }
-
-      // === STEP 3: Use verifyRegistrationResponse for full WebAuthn validation ===
-      // This validates: challenge, origin, RP ID, and extracts the real public key
-      const origin = config.passkey?.origin || ctx.headers?.get('origin') || '';
-      const rpID = config.passkey?.rpID || 'localhost';
-
-      const verification = await verifyRegistrationResponse({
-        response: {
-          id: credentialId,
-          rawId: credentialId,
-          response: {
-            clientDataJSON: body.credential.response.clientDataJSON,
-            attestationObject: body.credential.response.attestationObject,
-            transports: body.credential.response.transports as AuthenticatorTransportFuture[],
-          },
-          type: 'public-key',
-          clientExtensionResults: {},
-        },
-        expectedChallenge,
-        expectedOrigin: origin,
-        expectedRPID: rpID,
-        requireUserVerification: false,
-      });
-
-      if (!verification.verified || !verification.registrationInfo) {
-        throw new APIError('BAD_REQUEST', { message: 'WebAuthn verification failed' });
-      }
-
-      // === STEP 4: Extract VALIDATED public key from registrationInfo ===
-      // SECURITY: This public key comes from attestationObject, NOT from request body
-      const {
-        credential: cred,
-        credentialDeviceType,
-        credentialBackedUp,
-      } = verification.registrationInfo;
-      const publicKeyBase64 = isoBase64URL.fromBuffer(cred.publicKey);
-
-      // === STEP 5: Check for existing passkey ===
-      const existingPasskeys = (await ctx.context.adapter.findMany({
-        model: 'passkey',
-        where: [{ field: 'credentialID', value: credentialId }],
-        limit: 1,
-      })) as PasskeyRecord[];
-
-      if (existingPasskeys.length > 0) {
-        const existingPasskey = existingPasskeys[0];
-
-        // Idempotent: same user registering same credential again
-        if (existingPasskey.userId === session.user.id) {
-          await ctx.context.internalAdapter.deleteVerificationValue(stored.id);
-          return ctx.json({ success: true } as SaveKeyResponse);
-        }
-
-        // Different user owns this credential - reject
-        throw new APIError('CONFLICT', {
-          message: 'Credential already registered to another user',
-        });
-      }
-
-      // === STEP 6: Create passkey and wallet atomically ===
-      const address = deriveTempoAddress(publicKeyBase64);
-
-      const passkey = (await ctx.context.adapter.create({
-        model: 'passkey',
-        data: {
-          userId: session.user.id,
-          credentialID: credentialId,
-          publicKey: publicKeyBase64, // COSE base64 from verified response
-          counter: cred.counter,
-          deviceType: credentialDeviceType,
-          backedUp: credentialBackedUp,
-          transports: body.credential.response.transports?.join(',') || null,
-          createdAt: new Date(),
-        },
-      })) as PasskeyRecord;
-
-      await ctx.context.adapter.create({
-        model: 'wallet',
-        data: {
-          address,
-          keyType: 'p256',
-          walletType: 'passkey',
-          passkeyId: passkey.id,
-          userId: session.user.id,
-          createdAt: new Date(),
-        },
-      });
-
-      // === STEP 7: Cleanup verification value (prevents replay) ===
-      await ctx.context.internalAdapter.deleteVerificationValue(stored.id);
-
-      return ctx.json({ success: true } as SaveKeyResponse);
-    }
-  );
-
-/**
- * GET /tempo/keymanager - List all keys for the user
- *
- * Returns all passkey credentials with their public keys and addresses.
- */
-export const listKeys = createAuthEndpoint(
-  '/tempo/keymanager',
-  {
-    method: 'GET',
-    use: [sessionMiddleware],
-    metadata: {
-      openapi: {
-        operationId: 'listKeys',
-        description: 'List all keys for the authenticated user',
-        responses: {
-          '200': {
-            description: 'Keys retrieved successfully',
-            content: {
-              'application/json': {
-                schema: {
-                  type: 'array',
-                  items: {
-                    type: 'object',
-                    properties: {
-                      credentialId: { type: 'string' },
-                      publicKey: { type: 'string' },
-                      address: { type: 'string' },
-                    },
-                  },
-                  description: 'Array of key objects',
-                },
-              },
-            },
-          },
-        },
-      },
-    },
-  },
-  async (ctx) => {
-    const passkeys = await ctx.context.adapter.findMany<PasskeyRecord>({
-      model: 'passkey',
-      where: [{ field: 'userId', value: ctx.context.session.user.id }],
-      sortBy: { field: 'createdAt', direction: 'desc' },
-    });
-
-    const keys = passkeys.map((p) => {
-      // Handle both hex (from SDK) and COSE base64 (from @simplewebauthn) formats
+    // Derive publicKeyHex and tempoAddress from publicKey for each passkey
+    const passkeys: PasskeyWithAddress[] = rawPasskeys.map((p) => {
       const publicKeyHex = getPublicKeyHex(p.publicKey);
       return {
-        credentialId: p.credentialID,
-        publicKey: publicKeyHex,
-        address: deriveTempoAddressFromHex(publicKeyHex),
+        id: p.id,
+        userId: p.userId,
+        name: p.name,
+        credentialID: p.credentialID,
+        publicKey: p.publicKey,
+        publicKeyHex,
+        tempoAddress: deriveTempoAddressFromHex(publicKeyHex),
+        createdAt: typeof p.createdAt === 'string' ? p.createdAt : p.createdAt.toISOString(),
       };
     });
 
-    return ctx.json(keys, { status: 200 });
+    return ctx.json(passkeys, { status: 200 });
   }
 );
 
@@ -1389,6 +990,7 @@ export const createAccessKey = (config: TempoPluginConfig) =>
       }
 
       // Create access key
+      const now = new Date().toISOString();
       const accessKey = (await ctx.context.adapter.create({
         model: 'accessKey',
         data: {
@@ -1403,7 +1005,8 @@ export const createAccessKey = (config: TempoPluginConfig) =>
           status: 'active',
           label: body.label || config.defaults?.accessKeyLabel || null,
           revokedAt: null,
-          createdAt: new Date(),
+          createdAt: now,
+          updatedAt: now,
         },
       })) as AccessKeyRecord;
 
@@ -1604,11 +1207,6 @@ export const revokeAccessKey = createAuthEndpoint(
       limit: 1,
     });
 
-    console.log('[Tempo] Fetched access key for revoke:', JSON.stringify(accessKeys[0], (k, v) => {
-      if (v instanceof Date) return `[Date: ${v.toISOString()}]`;
-      return v;
-    }, 2));
-
     if (accessKeys.length === 0) {
       throw new APIError('NOT_FOUND', { message: TEMPO_ERROR_CODES.ACCESS_KEY_NOT_FOUND });
     }
@@ -1624,29 +1222,16 @@ export const revokeAccessKey = createAuthEndpoint(
       throw new APIError('BAD_REQUEST', { message: TEMPO_ERROR_CODES.ACCESS_KEY_ALREADY_REVOKED });
     }
 
-    const updatePayload = {
-      status: 'revoked',
-      revokedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    console.log('[Tempo] Revoking access key:', { id, updatePayload });
-
-    let revokedKey: AccessKeyRecord | null;
-    try {
-      revokedKey = (await ctx.context.adapter.update({
-        model: 'accessKey',
-        where: [{ field: 'id', value: id }],
-        update: updatePayload,
-      })) as AccessKeyRecord | null;
-    } catch (err) {
-      console.error('[Tempo] Update error:', err);
-      if (err instanceof Error) {
-        console.error('[Tempo] Stack trace:', err.stack);
-      }
-      throw err;
-    }
-
-    console.log('[Tempo] Revoke result:', revokedKey);
+    const now = new Date().toISOString();
+    const revokedKey = (await ctx.context.adapter.update({
+      model: 'accessKey',
+      where: [{ field: 'id', value: id }],
+      update: {
+        status: 'revoked',
+        revokedAt: now,
+        updatedAt: now,
+      },
+    })) as AccessKeyRecord | null;
 
     if (!revokedKey) {
       throw new APIError('INTERNAL_SERVER_ERROR', { message: 'Failed to revoke access key' });

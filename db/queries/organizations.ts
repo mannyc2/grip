@@ -1,7 +1,6 @@
 import { db } from '@/db';
-import { networkFilter } from '../network';
-import { accessKeys } from '@/db/schema/business';
-import { member, passkey, wallet } from '@/db/schema/auth';
+import { chainIdFilter } from '../network';
+import { accessKey, member, passkey, wallet } from '@/db/schema/auth';
 import { and, eq, sql } from 'drizzle-orm';
 
 // ============================================================================
@@ -37,24 +36,11 @@ export async function getOrgWalletAddress(orgId: string): Promise<`0x${string}`>
 // MEMBERSHIP
 // ============================================================================
 
-export async function isOrgOwner(orgId: string, userId: string): Promise<boolean> {
-  const membership = await db.query.member.findFirst({
-    where: and(eq(member.organizationId, orgId), eq(member.userId, userId)),
-  });
-  return membership?.role === 'owner';
-}
-
 export async function isOrgMember(orgId: string, userId: string): Promise<boolean> {
   const membership = await db.query.member.findFirst({
     where: and(eq(member.organizationId, orgId), eq(member.userId, userId)),
   });
   return !!membership;
-}
-
-export async function getOrgMembership(orgId: string, userId: string) {
-  return db.query.member.findFirst({
-    where: and(eq(member.organizationId, orgId), eq(member.userId, userId)),
-  });
 }
 
 // ============================================================================
@@ -65,7 +51,7 @@ export async function getOrgMembership(orgId: string, userId: string) {
  * Get active Access Key for org team member
  *
  * Finds access key where the key wallet belongs to the team member.
- * Join path: accessKeys.keyWalletId → wallet.passkeyId → passkey.userId
+ * Join path: accessKey.keyWalletId → wallet.passkeyId → passkey.userId
  */
 export async function getOrgAccessKey(orgId: string, teamMemberUserId: string) {
   // Find wallet for team member's passkey
@@ -79,12 +65,12 @@ export async function getOrgAccessKey(orgId: string, teamMemberUserId: string) {
 
   if (!teamMemberWallet) return null;
 
-  return db.query.accessKeys.findFirst({
+  return db.query.accessKey.findFirst({
     where: and(
-      eq(accessKeys.organizationId, orgId),
-      eq(accessKeys.keyWalletId, teamMemberWallet.id),
-      eq(accessKeys.status, 'active'),
-      networkFilter(accessKeys)
+      eq(accessKey.organizationId, orgId),
+      eq(accessKey.keyWalletId, teamMemberWallet.id),
+      eq(accessKey.status, 'active'),
+      chainIdFilter(accessKey)
     ),
   });
 }
@@ -98,34 +84,33 @@ export async function getOrgAccessKey(orgId: string, teamMemberUserId: string) {
 export async function getOrgAccessKeys(orgId: string) {
   const { user } = await import('@/db/schema/auth');
 
-  // Join: accessKeys.keyWalletId → wallet → passkey → user
+  // Join: accessKey.keyWalletId → wallet → passkey → user
   const results = await db
     .select({
-      id: accessKeys.id,
-      organizationId: accessKeys.organizationId,
-      network: accessKeys.network,
-      rootWalletId: accessKeys.rootWalletId,
-      keyWalletId: accessKeys.keyWalletId,
-      chainId: accessKeys.chainId,
-      expiry: accessKeys.expiry,
-      limits: accessKeys.limits,
-      status: accessKeys.status,
-      createdAt: accessKeys.createdAt,
-      label: accessKeys.label,
+      id: accessKey.id,
+      organizationId: accessKey.organizationId,
+      chainId: accessKey.chainId,
+      rootWalletId: accessKey.rootWalletId,
+      keyWalletId: accessKey.keyWalletId,
+      expiry: accessKey.expiry,
+      limits: accessKey.limits,
+      status: accessKey.status,
+      createdAt: accessKey.createdAt,
+      label: accessKey.label,
       keyType: wallet.keyType,
       user: {
         id: user.id,
         name: user.name,
       },
     })
-    .from(accessKeys)
-    .leftJoin(wallet, eq(accessKeys.keyWalletId, wallet.id))
+    .from(accessKey)
+    .leftJoin(wallet, eq(accessKey.keyWalletId, wallet.id))
     .leftJoin(passkey, eq(wallet.passkeyId, passkey.id))
     .leftJoin(user, eq(passkey.userId, user.id))
-    .where(and(eq(accessKeys.organizationId, orgId), networkFilter(accessKeys)))
-    .orderBy(accessKeys.createdAt);
+    .where(and(eq(accessKey.organizationId, orgId), chainIdFilter(accessKey)))
+    .orderBy(accessKey.createdAt);
 
-  // Serialize bigint expiry to string (JSON can't represent bigint)
+  // Serialize expiry to string (JSON can't represent bigint/number edge cases)
   return results.map((key) => ({
     ...key,
     expiry: key.expiry !== null ? key.expiry.toString() : null,
@@ -140,19 +125,23 @@ export async function validateOrgSpending(params: {
   teamMemberUserId: string;
   tokenAddress: string;
   amount: bigint;
-}): Promise<{ valid: boolean; error?: string; accessKey?: typeof accessKeys.$inferSelect }> {
-  const accessKey = await getOrgAccessKey(params.orgId, params.teamMemberUserId);
+}): Promise<{ valid: boolean; error?: string; accessKey?: typeof accessKey.$inferSelect }> {
+  const key = await getOrgAccessKey(params.orgId, params.teamMemberUserId);
 
-  if (!accessKey) {
+  if (!key) {
     return { valid: false, error: 'No active Access Key for this organization' };
   }
 
-  if (accessKey.expiry && BigInt(accessKey.expiry) < BigInt(Math.floor(Date.now() / 1000))) {
+  if (key.expiry && BigInt(key.expiry) < BigInt(Math.floor(Date.now() / 1000))) {
     return { valid: false, error: 'Access Key has expired' };
   }
 
-  const limits = accessKey.limits as Record<string, { initial: string; remaining: string }>;
-  const tokenLimit = limits[params.tokenAddress];
+  // limits is stored as JSON string in the database
+  const limits = (typeof key.limits === 'string' ? JSON.parse(key.limits) : key.limits) as Record<
+    string,
+    { initial: string; remaining: string }
+  >;
+  const tokenLimit = limits?.[params.tokenAddress];
 
   if (!tokenLimit) {
     return { valid: false, error: 'Token not authorized for this Access Key' };
@@ -165,7 +154,7 @@ export async function validateOrgSpending(params: {
     };
   }
 
-  return { valid: true, accessKey };
+  return { valid: true, accessKey: key };
 }
 
 // ============================================================================
@@ -181,15 +170,10 @@ export async function validateOrgSpending(params: {
 export async function getOrgBySlug(slug: string) {
   const { organization } = await import('@/db/schema/auth');
 
+  // Only fetch org data - members are fetched separately via getOrgMembersWithUsers
+  // after privacy checks pass
   return db.query.organization.findFirst({
     where: eq(organization.slug, slug),
-    with: {
-      members: {
-        with: {
-          user: true,
-        },
-      },
-    },
   });
 }
 
@@ -213,7 +197,7 @@ export async function getOrgBountyData(orgId: string) {
       createdAt: bounties.createdAt,
     })
     .from(bounties)
-    .where(and(networkFilter(bounties), eq(bounties.organizationId, orgId)))
+    .where(and(chainIdFilter(bounties), eq(bounties.organizationId, orgId)))
     .orderBy(bounties.createdAt);
 
   const totalFunded = funded.reduce((sum, b) => sum + BigInt(b.amount), BigInt(0));
@@ -262,7 +246,7 @@ export async function getOrgRepositories(orgId: string, githubLogin: string | nu
       totalFunded: sql<bigint>`sum(${bounties.totalFunded})`.mapWith(BigInt),
     })
     .from(bounties)
-    .where(and(networkFilter(bounties), eq(bounties.organizationId, orgId)))
+    .where(and(chainIdFilter(bounties), eq(bounties.organizationId, orgId)))
     .groupBy(bounties.githubRepoId, bounties.githubOwner, bounties.githubRepo);
 
   // 2. Get repos owned by this org that have settings (installed)

@@ -13,7 +13,6 @@ import {
   type PasskeyPhase,
 } from '@/lib/webauthn';
 import { AlertTriangle, ExternalLink, Key } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useDisconnect } from 'wagmi';
 
@@ -37,7 +36,6 @@ interface PasskeyManagerProps {
 }
 
 export function PasskeyManager({ wallet }: PasskeyManagerProps) {
-  const router = useRouter();
   const { disconnect } = useDisconnect();
   const [phase, setPhase] = useState<PasskeyPhase>('ready');
   const [error, setError] = useState<PasskeyOperationError | null>(null);
@@ -57,8 +55,7 @@ export function PasskeyManager({ wallet }: PasskeyManagerProps) {
         throw new Error(result.error.message || 'Failed to register passkey');
       }
 
-      setPhase('processing');
-      router.refresh();
+      // Nanostore auto-updates parent via usePasskeys hook
       setPhase('success');
 
       setTimeout(() => {
@@ -83,9 +80,8 @@ export function PasskeyManager({ wallet }: PasskeyManagerProps) {
       if (result.error) {
         throw new Error(result.error.message || 'Failed to delete');
       }
-      // Disconnect wagmi to clear localStorage cache
+      // Disconnect wagmi to clear localStorage cache - nanostore auto-updates parent
       disconnect();
-      router.refresh(); // Refresh to update UI
       setShowDeleteConfirm(false);
     } catch (err) {
       alert('Failed to delete wallet. Please try again.');

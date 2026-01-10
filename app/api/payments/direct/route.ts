@@ -1,10 +1,12 @@
 import { db } from '@/db';
-import { getNetworkForInsert } from '@/db/network';
+import { getNetworkName } from '@/db/network';
 import { getOrgAccessKey, getOrgWalletAddress } from '@/db/queries/organizations';
 import { getUserWallet } from '@/db/queries/passkeys';
 import { createDirectPayment } from '@/db/queries/payouts';
 import { getUserByName } from '@/db/queries/users';
-import { accessKeys, payouts } from '@/db/schema/business';
+import { payouts } from '@/db/schema/business';
+import { accessKey } from '@/db/schema/auth';
+import { chainIdFilter } from '@/db/network';
 import { auth } from '@/lib/auth/auth';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { fetchGitHubUser } from '@/lib/github';
@@ -159,18 +161,18 @@ async function tryAutoSign(params: AutoSignParams): Promise<Response | null> {
     isOrgPayment,
     activeOrgId,
   } = params;
-  const network = getNetworkForInsert();
+  const network = getNetworkName();
 
   // Get active Access Key
-  let activeKey: typeof accessKeys.$inferSelect | null | undefined;
+  let activeKey: typeof accessKey.$inferSelect | null | undefined;
   if (isOrgPayment && activeOrgId) {
     activeKey = await getOrgAccessKey(activeOrgId, session.user.id);
   } else {
-    activeKey = await db.query.accessKeys.findFirst({
+    activeKey = await db.query.accessKey.findFirst({
       where: and(
-        eq(accessKeys.userId, session.user.id),
-        eq(accessKeys.network, network),
-        eq(accessKeys.status, 'active')
+        eq(accessKey.userId, session.user.id),
+        chainIdFilter(accessKey),
+        eq(accessKey.status, 'active')
       ),
     });
   }

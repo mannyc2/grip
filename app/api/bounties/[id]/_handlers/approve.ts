@@ -1,7 +1,9 @@
 import { db } from '@/db';
-import { getNetworkForInsert } from '@/db/network';
-import { isOrgMember, getOrgAccessKey, getOrgWalletAddress } from '@/db/queries/organizations';
+import { chainIdFilter, getChainId, getNetworkName } from '@/db/network';
+import { getOrgAccessKey, getOrgWalletAddress } from '@/db/queries/organizations';
 import { getBountyWithRepoSettings } from '@/db/queries/bounties';
+import { auth } from '@/lib/auth/auth';
+import { headers } from 'next/headers';
 import { getUserWallet } from '@/db/queries/passkeys';
 import { createPayout, updatePayoutStatus } from '@/db/queries/payouts';
 import {
@@ -10,7 +12,8 @@ import {
   getSubmissionById,
   getSubmissionWithDetails,
 } from '@/db/queries/submissions';
-import { accessKeys, activityLog } from '@/db/schema/business';
+import { activityLog } from '@/db/schema/business';
+import { accessKey } from '@/db/schema/auth';
 import type { requireAuth } from '@/lib/auth/auth-server';
 import { notifyPrApproved } from '@/lib/notifications';
 import { tempoClient } from '@/lib/tempo/client';
@@ -57,7 +60,12 @@ export async function handleApprove(
 
   // Permission check
   if (isOrgPayment) {
-    if (!(await isOrgMember(bounty.organizationId!, session.user.id))) {
+    const headersList = await headers();
+    const hasPermission = await auth.api.hasPermission({
+      headers: headersList,
+      body: { permissions: { member: ['read'] }, organizationId: bounty.organizationId! },
+    });
+    if (!hasPermission?.success) {
       return Response.json(
         { error: 'Only organization members can approve org bounties' },
         { status: 403 }
@@ -233,18 +241,18 @@ async function tryAutoSign(params: AutoSignParams): Promise<Response | null> {
     contributorWallet,
     isOrgPayment,
   } = params;
-  const network = getNetworkForInsert();
+  const network = getNetworkName();
 
   // Get active Access Key
-  let activeKey: typeof accessKeys.$inferSelect | null | undefined;
+  let activeKey: typeof accessKey.$inferSelect | null | undefined;
   if (isOrgPayment) {
     activeKey = await getOrgAccessKey(bounty.organizationId!, session.user.id);
   } else {
-    activeKey = await db.query.accessKeys.findFirst({
+    activeKey = await db.query.accessKey.findFirst({
       where: and(
-        eq(accessKeys.userId, session.user.id),
-        eq(accessKeys.network, network),
-        eq(accessKeys.status, 'active')
+        eq(accessKey.userId, session.user.id),
+        chainIdFilter(accessKey),
+        eq(accessKey.status, 'active')
       ),
     });
   }
@@ -274,7 +282,7 @@ async function tryAutoSign(params: AutoSignParams): Promise<Response | null> {
     // Log usage (using access_key_created event for now - should add access_key_used to enum)
     await db.insert(activityLog).values({
       eventType: 'payout_sent',
-      network,
+      chainId: getChainId(),
       userId: session.user.id,
       bountyId: bounty.id,
       payoutId: payout.id,
@@ -288,9 +296,9 @@ async function tryAutoSign(params: AutoSignParams): Promise<Response | null> {
     });
 
     await db
-      .update(accessKeys)
-      .set({ lastUsedAt: new Date().toISOString() })
-      .where(eq(accessKeys.id, activeKey.id));
+      .update(accessKey)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(accessKey.id, activeKey.id));
 
     return Response.json({
       message: 'Payment sent automatically via Access Key',

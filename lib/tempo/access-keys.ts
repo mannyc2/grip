@@ -1,9 +1,18 @@
 // lib/tempo/access-keys.ts
 import { db } from '@/db';
-import { getNetworkForInsert } from '@/db/network';
-import { accessKeys } from '@/db/schema/business';
-import { member, wallet } from '@/db/schema/auth';
+import { accessKey, member, wallet } from '@/db/schema/auth';
 import { and, eq } from 'drizzle-orm';
+// Generate unique ID (32 chars like better-auth)
+function generateId(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  const randomValues = new Uint8Array(32);
+  crypto.getRandomValues(randomValues);
+  for (let i = 0; i < 32; i++) {
+    result += chars[randomValues[i] % chars.length];
+  }
+  return result;
+}
 
 // ============================================================================
 // ORGANIZATION ACCESS KEYS (Team member signs directly)
@@ -26,8 +35,6 @@ export async function createOrgAccessKey(params: {
   chainId: number;
   label?: string;
 }) {
-  const network = getNetworkForInsert();
-
   // Get org owner's passkey wallet (root - account being controlled)
   const orgOwner = await db.query.member.findFirst({
     where: and(eq(member.organizationId, params.orgId), eq(member.role, 'owner')),
@@ -54,34 +61,39 @@ export async function createOrgAccessKey(params: {
     throw new Error('Team member has no passkey wallet');
   }
 
-  // Format limits as AccessKeyLimits (Record with initial/remaining)
-  const limits = params.spendingLimits.reduce(
-    (acc, l) => {
-      acc[l.tokenAddress] = {
-        initial: l.amount.toString(),
-        remaining: l.amount.toString(),
-      };
-      return acc;
-    },
-    {} as Record<string, { initial: string; remaining: string }>
+  // Format limits as JSON string
+  const limits = JSON.stringify(
+    params.spendingLimits.reduce(
+      (acc, l) => {
+        acc[l.tokenAddress] = {
+          initial: l.amount.toString(),
+          remaining: l.amount.toString(),
+        };
+        return acc;
+      },
+      {} as Record<string, { initial: string; remaining: string }>
+    )
   );
 
+  const now = new Date().toISOString();
   const [key] = await db
-    .insert(accessKeys)
+    .insert(accessKey)
     .values({
+      id: generateId(),
       userId: null,
       organizationId: params.orgId,
-      network,
       rootWalletId: rootWallet.id,
       keyWalletId: teamMemberWallet.id,
       chainId: params.chainId,
-      expiry: params.expiryTimestamp ? BigInt(params.expiryTimestamp) : null,
+      expiry: params.expiryTimestamp ?? null,
       limits,
       authorizationSignature: params.authorizationSignature,
       authorizationHash: params.authorizationHash,
       status: 'active',
       label: params.label ?? 'Team Access',
       isDedicated: false,
+      createdAt: now,
+      updatedAt: now,
     })
     .returning();
 
@@ -95,13 +107,15 @@ export async function createOrgAccessKey(params: {
 /**
  * Revoke Access Key (generic function for both personal and org keys)
  */
-export async function revokeAccessKey(accessKeyId: string, reason: string) {
+export async function revokeAccessKeyById(accessKeyId: string, reason: string) {
+  const now = new Date().toISOString();
   await db
-    .update(accessKeys)
+    .update(accessKey)
     .set({
       status: 'revoked',
-      revokedAt: new Date().toISOString(),
+      revokedAt: now,
       revokedReason: reason,
+      updatedAt: now,
     })
-    .where(eq(accessKeys.id, accessKeyId));
+    .where(eq(accessKey.id, accessKeyId));
 }

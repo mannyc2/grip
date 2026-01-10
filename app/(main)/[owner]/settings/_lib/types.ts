@@ -25,14 +25,22 @@ export interface OrgMember {
   } | null;
 }
 
+export interface OrgInvitation {
+  id: string;
+  email: string;
+  role: OrgRole;
+  status: 'pending' | 'accepted' | 'rejected' | 'canceled';
+  expiresAt: Date;
+  inviterId: string;
+}
+
 export interface OrgAccessKey {
   id: string;
   organizationId: string | null;
-  network: string;
+  chainId: number;
   rootWalletId: string;
   keyWalletId: string;
   keyType: string | null;
-  chainId: number;
   expiry: string | null; // Unix timestamp as string (JSON can't serialize bigint)
   limits: unknown;
   status: string;
