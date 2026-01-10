@@ -201,6 +201,10 @@ export const getSchema = (options?: TempoPluginConfig) => {
           type: 'date' as const,
           required: true,
         },
+        updatedAt: {
+          type: 'date' as const,
+          required: false,
+        },
         ...(options?.schema?.accessKey?.additionalFields || {}),
       },
     },

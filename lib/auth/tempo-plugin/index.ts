@@ -21,6 +21,7 @@ import {
   getPasskeyAuthenticationOptions,
   getPasskeyRegistrationOptions,
   getPublicKey,
+  getServerWallet,
   getWallet,
   listAccessKeys,
   listKeys,
@@ -80,6 +81,7 @@ export const tempo = (config: TempoPluginConfig) => {
       // Wallet endpoints
       listWallets,
       getWallet,
+      getServerWallet,
       createWallet,
       // Access Key endpoints (wallet-based, uses adapter)
       createAccessKey: createAccessKey(config),

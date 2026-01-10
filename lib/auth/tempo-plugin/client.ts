@@ -3,10 +3,16 @@
  *
  * Client-side API for Tempo plugin endpoints.
  * Includes built-in WebAuthn ceremony handling for passkey registration/authentication.
+ *
+ * Exposes nanostores atoms for reactive state (wallets, passkeys, access keys).
+ * Use the framework hooks (useSession pattern) to subscribe to these.
  */
 
-import type { BetterAuthClientPlugin } from 'better-auth/client';
+import type { BetterAuthClientPlugin, ClientStore } from 'better-auth/client';
+import { useAuthQuery } from 'better-auth/client';
 import type { BetterFetch } from '@better-fetch/fetch';
+import { atom } from 'nanostores';
+import type { WritableAtom } from 'nanostores';
 import { KeyManager } from 'wagmi/tempo';
 import { connect, getConnections, getConnectors, signMessage } from 'wagmi/actions';
 import { KeyAuthorization } from 'ox/tempo';
@@ -137,7 +143,21 @@ export interface SignKeyAuthorizationResponse {
 // ACTIONS
 // ============================================================================
 
-export const getTempoActions = ($fetch: BetterFetch) => {
+type SignalAtom = WritableAtom<number>;
+const bump = (a: SignalAtom) => a.set(a.get() + 1);
+
+export const getTempoActions = (
+  $fetch: BetterFetch,
+  {
+    $passkeysSignal,
+    $accessKeysSignal,
+    $store,
+  }: {
+    $passkeysSignal: SignalAtom;
+    $accessKeysSignal: SignalAtom;
+    $store: ClientStore;
+  }
+) => {
   // Wallet management
   const listWallets = async () => {
     return $fetch<ListWalletsResponse>('/tempo/wallets', {
@@ -167,6 +187,17 @@ export const getTempoActions = ($fetch: BetterFetch) => {
     return { data: passkeyWallet, error: null };
   };
 
+  /**
+   * Get the server wallet for Access Key authorization
+   *
+   * Returns the backend wallet that users authorize to sign on their behalf.
+   */
+  const getServerWallet = async () => {
+    return $fetch<GetWalletResponse>('/tempo/server-wallet', {
+      method: 'GET',
+    });
+  };
+
   // Access Key management
   const listAccessKeys = async (params?: {
     status?: AccessKeyStatus;
@@ -187,10 +218,14 @@ export const getTempoActions = ($fetch: BetterFetch) => {
   };
 
   const createAccessKey = async (params: CreateAccessKeyRequest) => {
-    return $fetch<CreateAccessKeyResponse>('/tempo/access-keys', {
+    const res = await $fetch<CreateAccessKeyResponse>('/tempo/access-keys', {
       method: 'POST',
       body: params,
+      throw: false,
     });
+
+    if (res.data) bump($accessKeysSignal);
+    return res;
   };
 
   const getAccessKey = async (id: string) => {
@@ -200,10 +235,14 @@ export const getTempoActions = ($fetch: BetterFetch) => {
   };
 
   const revokeAccessKey = async (id: string, params?: RevokeAccessKeyRequest) => {
-    return $fetch<RevokeAccessKeyResponse>(`/tempo/access-keys/${id}`, {
+    const res = await $fetch<RevokeAccessKeyResponse>(`/tempo/access-keys/${id}`, {
       method: 'DELETE',
-      body: params ?? {}, // better-auth requires Content-Type which needs a body
+      body: params ?? {},
+      throw: false,
     });
+
+    if (res.data) bump($accessKeysSignal);
+    return res;
   };
 
   // ============================================================================
@@ -244,11 +283,17 @@ export const getTempoActions = ($fetch: BetterFetch) => {
       });
 
       // 3. Verify with server and create passkey + wallet
-      return $fetch<RegisterPasskeyResponse>('/tempo/passkey/register', {
+      const verified = await $fetch<RegisterPasskeyResponse>('/tempo/passkey/register', {
         method: 'POST',
         body: { response: credential, name: opts?.name },
         throw: false,
       });
+
+      if (verified.data) {
+        bump($passkeysSignal);
+      }
+
+      return verified;
     } catch (e) {
       // Handle WebAuthn-specific errors
       if (e instanceof WebAuthnError) {
@@ -330,11 +375,17 @@ export const getTempoActions = ($fetch: BetterFetch) => {
       });
 
       // 3. Verify with server and create session
-      return $fetch<AuthenticatePasskeyResponse>('/tempo/passkey/authenticate', {
+      const verified = await $fetch<AuthenticatePasskeyResponse>('/tempo/passkey/authenticate', {
         method: 'POST',
         body: { response: assertion },
         throw: false,
       });
+
+      if (verified.data) {
+        $store.notify('$sessionSignal');
+      }
+
+      return verified;
     } catch (e) {
       console.error('[Tempo] Passkey authentication error:', e);
       return {
@@ -354,10 +405,14 @@ export const getTempoActions = ($fetch: BetterFetch) => {
    * @param credentialId - The WebAuthn credential ID
    */
   const deletePasskey = async (credentialId: string) => {
-    return $fetch<DeletePasskeyResponse>(`/tempo/passkey/${credentialId}`, {
+    const res = await $fetch<DeletePasskeyResponse>(`/tempo/passkey/${credentialId}`, {
       method: 'DELETE',
-      body: {}, // better-auth requires Content-Type which needs a body
+      body: {},
+      throw: false,
     });
+
+    if (res.data) bump($passkeysSignal);
+    return res;
   };
 
   // Low-level endpoints for advanced use cases
@@ -485,6 +540,7 @@ export const getTempoActions = ($fetch: BetterFetch) => {
     listWallets,
     getWallet,
     getPasskeyWallet,
+    getServerWallet,
     // Access Keys
     listAccessKeys,
     createAccessKey,
@@ -514,40 +570,53 @@ export const getTempoActions = ($fetch: BetterFetch) => {
 /**
  * Tempo client plugin for better-auth
  *
- * Provides client-side API for Tempo plugin endpoints:
- * - Passkey Registration/Auth: Register passkeys, authenticate with passkeys
- * - Wallets: List user's wallets, get passkey wallet
- * - Access Keys: Create, list, get, revoke
- * - KeyManager: Tempo SDK integration for signing
- * - signKeyAuthorization: Sign Access Key authorizations with passkey
- *
- * @example
- * ```typescript
- * import { authClient } from '@/lib/auth/auth-client';
- * import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
- *
- * // Register a new passkey (creates wallet atomically)
- * const { data: regOptions } = await authClient.getPasskeyRegistrationOptions();
- * const credential = await startRegistration(regOptions);
- * const { data: result } = await authClient.registerPasskey({
- *   response: credential,
- *   name: 'My Passkey',
- * });
- * console.log('Wallet created:', result.wallet.address);
- *
- * // Authenticate with passkey
- * const { data: authOptions } = await authClient.getPasskeyAuthenticationOptions();
- * const assertion = await startAuthentication(authOptions);
- * const { data: session } = await authClient.authenticateWithPasskey({
- *   response: assertion,
- * });
- * ```
+ * Provides client-side API for Tempo plugin endpoints.
+ * Exposes reactive atoms for passkeys and access keys.
  */
 export const tempoClient = () => {
+  const $passkeysSignal: SignalAtom = atom(0);
+  const $accessKeysSignal: SignalAtom = atom(0);
+
   return {
     id: 'tempo',
     $InferServerPlugin: {} as ReturnType<typeof tempo>,
-    getActions: ($fetch) => getTempoActions($fetch),
+
+    getActions: ($fetch: BetterFetch, $store: ClientStore) =>
+      getTempoActions($fetch, { $passkeysSignal, $accessKeysSignal, $store }),
+
+    getAtoms($fetch: BetterFetch) {
+      const passkeys = useAuthQuery<PasskeyWithAddress[]>(
+        $passkeysSignal,
+        '/tempo/passkeys',
+        $fetch,
+        { method: 'GET' }
+      );
+
+      // Canonical view: keys the user has granted to others (most common dashboard view)
+      // For "received" keys or filtered views, use the listAccessKeys action directly
+      const accessKeys = useAuthQuery<ListAccessKeysResponse>(
+        $accessKeysSignal,
+        '/tempo/access-keys?direction=granted',
+        $fetch,
+        { method: 'GET' }
+      );
+
+      return {
+        passkeys,
+        accessKeys,
+        $passkeysSignal,
+        $accessKeysSignal,
+      };
+    },
+
+    // Only handle sign-out here; all other mutations use manual bumps (gated on success).
+    // This avoids double-invalidation while still clearing state on logout.
+    // Use endsWith to handle different base paths (/sign-out, /api/auth/sign-out, etc.)
+    atomListeners: [
+      { matcher: (path: string) => path === '/sign-out' || path.endsWith('/sign-out'), signal: '$passkeysSignal' },
+      { matcher: (path: string) => path === '/sign-out' || path.endsWith('/sign-out'), signal: '$accessKeysSignal' },
+      { matcher: (path: string) => path === '/sign-out' || path.endsWith('/sign-out'), signal: '$sessionSignal' },
+    ],
   } satisfies BetterAuthClientPlugin;
 };
 

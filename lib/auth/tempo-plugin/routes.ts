@@ -1029,11 +1029,10 @@ function serializeWallet(wallet: WalletRecord): Wallet {
 /**
  * GET /tempo/wallets - List Wallets
  *
- * Returns wallets relevant to the current user:
- * - User's passkey wallets
- * - User's external wallets
- * - User's dedicated server wallets
- * - Shared server wallets (userId = null)
+ * Returns the user's own wallets:
+ * - Passkey wallets
+ * - External wallets
+ * - User-specific server wallets
  */
 export const listWallets = createAuthEndpoint(
   '/tempo/wallets',
@@ -1055,23 +1054,52 @@ export const listWallets = createAuthEndpoint(
   async (ctx) => {
     const { session } = ctx.context;
 
-    // User's own wallets (passkey, external, or dedicated server)
+    // User's own wallets only (passkey, external, or user-specific server wallets)
     const userWallets = await ctx.context.adapter.findMany<WalletRecord>({
       model: 'wallet',
       where: [{ field: 'userId', value: session.user.id }],
       sortBy: { field: 'createdAt', direction: 'desc' },
     });
 
-    // Shared server wallets (userId = null, walletType = server)
-    const allServerWallets = await ctx.context.adapter.findMany<WalletRecord>({
+    return ctx.json({ wallets: userWallets.map(serializeWallet) });
+  }
+);
+
+/**
+ * GET /tempo/server-wallet - Get Server Wallet
+ *
+ * Returns the shared server wallet used for Access Key authorization.
+ * This is the wallet address that users authorize to sign on their behalf.
+ */
+export const getServerWallet = createAuthEndpoint(
+  '/tempo/server-wallet',
+  {
+    method: 'GET',
+    use: [sessionMiddleware],
+    metadata: {
+      openapi: {
+        operationId: 'getServerWallet',
+        description: 'Get the server wallet for Access Key authorization',
+        responses: {
+          '200': { description: 'Server wallet retrieved successfully' },
+          '404': { description: 'Server wallet not configured' },
+        },
+      },
+    },
+  },
+  async (ctx) => {
+    // Find the shared server wallet (userId = null, walletType = server)
+    const serverWallets = await ctx.context.adapter.findMany<WalletRecord>({
       model: 'wallet',
       where: [{ field: 'walletType', value: 'server' }],
     });
-    const sharedWallets = allServerWallets.filter((w) => w.userId === null);
+    const serverWallet = serverWallets.find((w) => w.userId === null);
 
-    const wallets = [...userWallets, ...sharedWallets];
+    if (!serverWallet) {
+      throw new APIError('NOT_FOUND', { message: 'Server wallet not configured' });
+    }
 
-    return ctx.json({ wallets: wallets.map(serializeWallet) });
+    return ctx.json({ wallet: serializeWallet(serverWallet) });
   }
 );
 
@@ -1576,6 +1604,11 @@ export const revokeAccessKey = createAuthEndpoint(
       limit: 1,
     });
 
+    console.log('[Tempo] Fetched access key for revoke:', JSON.stringify(accessKeys[0], (k, v) => {
+      if (v instanceof Date) return `[Date: ${v.toISOString()}]`;
+      return v;
+    }, 2));
+
     if (accessKeys.length === 0) {
       throw new APIError('NOT_FOUND', { message: TEMPO_ERROR_CODES.ACCESS_KEY_NOT_FOUND });
     }
@@ -1591,14 +1624,29 @@ export const revokeAccessKey = createAuthEndpoint(
       throw new APIError('BAD_REQUEST', { message: TEMPO_ERROR_CODES.ACCESS_KEY_ALREADY_REVOKED });
     }
 
-    const revokedKey = (await ctx.context.adapter.update({
-      model: 'accessKey',
-      where: [{ field: 'id', value: id }],
-      update: {
-        status: 'revoked',
-        revokedAt: new Date(),
-      },
-    })) as AccessKeyRecord | null;
+    const updatePayload = {
+      status: 'revoked',
+      revokedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    console.log('[Tempo] Revoking access key:', { id, updatePayload });
+
+    let revokedKey: AccessKeyRecord | null;
+    try {
+      revokedKey = (await ctx.context.adapter.update({
+        model: 'accessKey',
+        where: [{ field: 'id', value: id }],
+        update: updatePayload,
+      })) as AccessKeyRecord | null;
+    } catch (err) {
+      console.error('[Tempo] Update error:', err);
+      if (err instanceof Error) {
+        console.error('[Tempo] Stack trace:', err.stack);
+      }
+      throw err;
+    }
+
+    console.log('[Tempo] Revoke result:', revokedKey);
 
     if (!revokedKey) {
       throw new APIError('INTERNAL_SERVER_ERROR', { message: 'Failed to revoke access key' });
