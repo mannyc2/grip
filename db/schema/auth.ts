@@ -170,6 +170,9 @@ export const organization = pgTable('organization', {
   githubOrgLogin: varchar('github_org_login', { length: 39 }),
   syncMembership: boolean('sync_membership').default(false),
   lastSyncedAt: timestamp('last_synced_at'),
+  // Privacy: 'public' (anyone), 'members_only' (members can view), 'private' (hidden/404)
+  // Default to 'private' - orgs become public when confirmed via GitHub API or manually set
+  visibility: varchar('visibility', { length: 20 }).default('private').notNull(),
 });
 
 export const member = pgTable(

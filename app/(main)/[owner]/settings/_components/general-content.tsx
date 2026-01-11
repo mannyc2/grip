@@ -16,10 +16,19 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { formatTimeAgo } from '@/lib/utils';
-import { Building2, ExternalLink, Calendar, Trash2, Loader2 } from 'lucide-react';
+import { Building2, ExternalLink, Calendar, Trash2, Loader2, Eye, EyeOff, Users } from 'lucide-react';
 import Link from 'next/link';
 import { authClient } from '@/lib/auth/auth-client';
+
+type OrgVisibility = 'public' | 'private' | 'members_only';
 
 interface Organization {
   id: string;
@@ -28,6 +37,7 @@ interface Organization {
   logo: string | null;
   githubOrgLogin: string | null;
   createdAt: Date;
+  visibility: OrgVisibility;
 }
 
 interface GeneralContentProps {
@@ -39,6 +49,34 @@ export function GeneralContent({ organization, isOwner }: GeneralContentProps) {
   const router = useRouter();
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [visibility, setVisibility] = useState<OrgVisibility>(organization.visibility);
+  const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
+  const [visibilityError, setVisibilityError] = useState<string | null>(null);
+
+  const handleVisibilityChange = async (newVisibility: OrgVisibility) => {
+    setIsUpdatingVisibility(true);
+    setVisibilityError(null);
+
+    try {
+      const res = await fetch(`/api/organizations/${organization.id}/visibility`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visibility: newVisibility }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Failed to update visibility');
+      }
+
+      setVisibility(newVisibility);
+      router.refresh();
+    } catch (err) {
+      setVisibilityError(err instanceof Error ? err.message : 'Failed to update visibility');
+    } finally {
+      setIsUpdatingVisibility(false);
+    }
+  };
 
   const handleDeleteOrg = async () => {
     setIsDeleting(true);
@@ -99,6 +137,59 @@ export function GeneralContent({ organization, isOwner }: GeneralContentProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Privacy Settings - Owners only */}
+      {isOwner && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Privacy</CardTitle>
+            <CardDescription>Control who can see this organization</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {visibilityError && (
+              <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
+                {visibilityError}
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-4">
+              <div className="space-y-1">
+                <p className="font-medium">Organization visibility</p>
+                <p className="text-sm text-muted-foreground">
+                  Choose who can view this organization&apos;s profile, bounties, and repositories.
+                </p>
+              </div>
+              <Select
+                value={visibility}
+                onValueChange={(v) => handleVisibilityChange(v as OrgVisibility)}
+                disabled={isUpdatingVisibility}
+              >
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="public">
+                    <Eye className="size-3.5" />
+                    Public
+                  </SelectItem>
+                  <SelectItem value="members_only">
+                    <Users className="size-3.5" />
+                    Members only
+                  </SelectItem>
+                  <SelectItem value="private">
+                    <EyeOff className="size-3.5" />
+                    Private
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="text-xs text-muted-foreground space-y-1 pt-2 border-t">
+              <p><strong>Public:</strong> Anyone can view the organization</p>
+              <p><strong>Members only:</strong> Only members can view the organization</p>
+              <p><strong>Private:</strong> Organization is hidden (404 for non-members)</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Danger Zone - Owners only */}
       {isOwner && (

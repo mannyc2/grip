@@ -151,13 +151,14 @@ export async function findUserByGitHubUsername(githubUsername: string): Promise<
 }
 
 /**
- * Get organizations a user belongs to
+ * Get organizations a user belongs to (with visibility filtering)
  *
  * Returns organization memberships with essential display data.
+ * Filters by visibility: only returns orgs that are public OR where viewer is also a member.
  * Used in user profile to show "Member of" section.
  */
-export async function getUserOrganizations(userId: string) {
-  return db.query.member.findMany({
+export async function getUserOrganizations(userId: string, viewerId?: string | null) {
+  const orgs = await db.query.member.findMany({
     where: eq(member.userId, userId),
     with: {
       organization: {
@@ -167,9 +168,32 @@ export async function getUserOrganizations(userId: string) {
           logo: true,
           slug: true,
           githubOrgLogin: true,
+          visibility: true,
         },
       },
     },
     orderBy: (member, { asc }) => [asc(member.createdAt)],
   });
+
+  // If viewer is the profile owner, show all their orgs
+  if (viewerId === userId) {
+    return orgs;
+  }
+
+  // If no viewer (anonymous), only show public orgs
+  if (!viewerId) {
+    return orgs.filter((m) => m.organization.visibility === 'public');
+  }
+
+  // Get viewer's org memberships to check shared membership
+  const viewerOrgs = await db.query.member.findMany({
+    where: eq(member.userId, viewerId),
+    columns: { organizationId: true },
+  });
+  const viewerOrgIds = new Set(viewerOrgs.map((m) => m.organizationId));
+
+  // Show org if public OR viewer is also a member
+  return orgs.filter(
+    (m) => m.organization.visibility === 'public' || viewerOrgIds.has(m.organization.id)
+  );
 }

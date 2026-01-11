@@ -93,6 +93,7 @@ export function OrgProfile({
     githubOrgLogin: github.login,
     syncMembership: false,
     lastSyncedAt: null,
+    visibility: 'private', // Default to private for safety (this path is GitHub-only orgs)
   };
 
   // Transform bountyData to ActivityItems

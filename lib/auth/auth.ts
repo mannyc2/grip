@@ -9,8 +9,9 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { createAuthMiddleware } from 'better-auth/api';
 import { organization } from 'better-auth/plugins';
 import { and, eq } from 'drizzle-orm';
-import { getGitHubToken } from '@/lib/github';
+import { getGitHubToken, getOrganization } from '@/lib/github';
 import { getUserOrgMembership } from '@/lib/github';
+import { organization as organizationTable } from '@/db/schema/auth';
 import { syncGitHubMembers } from '@/lib/organization/sync';
 import { ac, billingAdmin, bountyManager, member, owner } from './permissions';
 import { tempo } from './tempo-plugin';
@@ -128,17 +129,29 @@ export const auth = betterAuth({
       },
 
       organizationHooks: {
-        afterCreateOrganization: async ({ organization, member, user }) => {
-          // If GitHub org linked with sync enabled, trigger initial sync
-          // This populates the organization with GitHub members on creation
-          if (organization.githubOrgId && organization.syncMembership) {
-            const token = await getGitHubToken(user.id);
-            if (token) {
-              try {
-                await syncGitHubMembers(organization.id, token);
-              } catch (error) {
-                console.error('Initial org sync failed:', error);
-                // Don't throw - org is created, sync can be retried manually
+        afterCreateOrganization: async ({ organization: org, member, user }) => {
+          // If GitHub org linked, check visibility and sync members
+          if (org.githubOrgLogin) {
+            // Check if GitHub org is publicly accessible
+            // If accessible → set visibility to 'public', otherwise stays 'private' (default)
+            const githubOrg = await getOrganization(org.githubOrgLogin);
+            if (githubOrg) {
+              await db
+                .update(organizationTable)
+                .set({ visibility: 'public' })
+                .where(eq(organizationTable.id, org.id));
+            }
+
+            // If sync enabled, trigger initial member sync
+            if (org.syncMembership) {
+              const token = await getGitHubToken(user.id);
+              if (token) {
+                try {
+                  await syncGitHubMembers(org.id, token);
+                } catch (error) {
+                  console.error('Initial org sync failed:', error);
+                  // Don't throw - org is created, sync can be retried manually
+                }
               }
             }
           }

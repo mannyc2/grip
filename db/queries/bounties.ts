@@ -1,5 +1,14 @@
-import { bounties, bountyFunders, db, passkey, repoSettings, submissions, user } from '@/db';
-import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import {
+  bounties,
+  bountyFunders,
+  db,
+  organization,
+  passkey,
+  repoSettings,
+  submissions,
+  user,
+} from '@/db';
+import { and, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { chainIdFilter, getChainId } from '../network';
 
 export type BountyStatus = 'open' | 'completed' | 'cancelled';
@@ -239,7 +248,15 @@ export async function getBountyWithAuthor(id: string) {
     .from(bounties)
     .leftJoin(repoSettings, eq(bounties.repoSettingsId, repoSettings.githubRepoId))
     .leftJoin(user, eq(bounties.primaryFunderId, user.id))
-    .where(and(chainIdFilter(bounties), eq(bounties.id, id)))
+    .leftJoin(organization, eq(bounties.organizationId, organization.id))
+    .where(
+      and(
+        chainIdFilter(bounties),
+        eq(bounties.id, id),
+        // Filter by org visibility: only return if no org or org is public
+        or(isNull(bounties.organizationId), eq(organization.visibility, 'public'))
+      )
+    )
     .limit(1);
 
   return result ?? null;
@@ -297,6 +314,16 @@ export async function getAllBounties(options?: {
       orderBy = desc(bounties.createdAt);
   }
 
+  // Filter by org visibility: only show bounties from public orgs or bounties with no org
+  // Bounties from private/members_only orgs should not appear in public listings
+  const visibilityFilter = or(
+    isNull(bounties.organizationId),
+    eq(organization.visibility, 'public')
+  );
+  if (visibilityFilter) {
+    conditions.push(visibilityFilter);
+  }
+
   return db
     .select({
       bounty: bounties,
@@ -304,6 +331,7 @@ export async function getAllBounties(options?: {
     })
     .from(bounties)
     .leftJoin(repoSettings, eq(bounties.repoSettingsId, repoSettings.githubRepoId))
+    .leftJoin(organization, eq(bounties.organizationId, organization.id))
     .where(and(...conditions))
     .orderBy(orderBy)
     .limit(options?.limit ?? 100)

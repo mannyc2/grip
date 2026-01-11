@@ -1,0 +1,1 @@
+ALTER TABLE "organization" ADD COLUMN "visibility" varchar(20) DEFAULT 'private' NOT NULL;

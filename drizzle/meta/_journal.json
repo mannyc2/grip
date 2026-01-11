@@ -8,6 +8,13 @@
       "when": 1768062419877,
       "tag": "0000_special_omega_red",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1768094721932,
+      "tag": "0001_graceful_wallflower",
+      "breakpoints": true
     }
   ]
 }

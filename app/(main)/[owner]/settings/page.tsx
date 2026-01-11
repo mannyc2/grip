@@ -44,7 +44,10 @@ export default async function OrgSettingsPage({ params }: OrgSettingsPageProps) 
     );
   }
 
-  const org = result as typeof result & { githubOrgLogin?: string | null };
+  const org = result as typeof result & {
+    githubOrgLogin?: string | null;
+    visibility?: string | null;
+  };
   const isOwner = membership.role === 'owner';
 
   return (
@@ -56,6 +59,7 @@ export default async function OrgSettingsPage({ params }: OrgSettingsPageProps) 
         logo: org.logo ?? null,
         githubOrgLogin: org.githubOrgLogin ?? null,
         createdAt: org.createdAt,
+        visibility: (org.visibility as 'public' | 'private' | 'members_only') ?? 'public',
       }}
       isOwner={isOwner}
     />

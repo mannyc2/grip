@@ -65,26 +65,10 @@ export default async function OwnerPage({ params }: OwnerPageProps) {
     // Check if current user is a member of this org
     const isMember = session?.user ? await isOrgMember(gripOrg.id, session.user.id) : false;
 
-    // Privacy check for GitHub-linked orgs
-    // If linked to GitHub and GitHub org is not publicly accessible, require membership
-    //
-    // TODO: Plan better privacy support. Current approach has limitations:
-    // - Relies on GitHub API returning 404 to detect private orgs (extra API call)
-    // - No explicit `isPrivate` field on organization schema
-    // - Non-GitHub orgs have no privacy controls at all
-    //
-    // Better approach would be:
-    // 1. Add `visibility: 'public' | 'private' | 'members_only'` to organization schema
-    // 2. Set visibility when linking GitHub org (check org.type or visibility API)
-    // 3. Allow manual visibility override for non-GitHub orgs
-    // 4. Consider what data is visible at each level (profile, repos, bounties, members)
-    // 5. Add visibility controls to org settings UI
-    if (gripOrg.githubOrgId) {
-      const githubOrgAccessible = await getOrganization(gripOrg.githubOrgLogin!);
-      if (!githubOrgAccessible && !isMember) {
-        // GitHub org is private and user is not a GRIP member - return 404
-        notFound();
-      }
+    // Privacy check based on org visibility setting
+    // 'private' and 'members_only' require membership to view
+    if ((gripOrg.visibility === 'private' || gripOrg.visibility === 'members_only') && !isMember) {
+      notFound();
     }
 
     // Fetch BountyLane org data in parallel
@@ -145,7 +129,7 @@ export default async function OwnerPage({ params }: OwnerPageProps) {
     // Second batch: depends on bountyLaneUser.id
     const [organizations, userSubmissions] = bountyLaneUser
       ? await Promise.all([
-          getUserOrganizations(bountyLaneUser.id),
+          getUserOrganizations(bountyLaneUser.id, session?.user?.id),
           getSubmissionsByUser(bountyLaneUser.id),
         ])
       : [[], []];
