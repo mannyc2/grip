@@ -2,6 +2,7 @@ import { getSession } from '@/lib/auth/auth-server';
 import { getUserActiveRepos, getUserActiveSubmissions, getUserOnboardingStatus } from '@/db/queries/bounties';
 import { getDashboardStats, getUserActivityFeed } from '@/db/queries/dashboard';
 import { getUserOrganizations } from '@/db/queries/users';
+import { getUserOwnedOrgs } from '@/db/queries/organizations';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 import { cookies } from 'next/headers';
@@ -28,12 +29,13 @@ export default async function DashboardPage() {
   const userId = session.user.id;
 
   // Parallel data fetching
-  const [onboardingStatus, dashboardStats, activeRepos, userOrgs, activeSubmissions, activityFeed] =
+  const [onboardingStatus, dashboardStats, activeRepos, userOrgs, ownedOrgs, activeSubmissions, activityFeed] =
     await Promise.all([
       getUserOnboardingStatus(userId),
       getDashboardStats(userId),
       getUserActiveRepos(userId, 5),
       getUserOrganizations(userId, userId),
+      getUserOwnedOrgs(userId),
       getUserActiveSubmissions(userId, { limit: 5 }),
       getUserActivityFeed(userId, 10),
     ]);
@@ -64,7 +66,10 @@ export default async function DashboardPage() {
         <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr_280px] xl:grid-cols-[220px_1fr_280px] gap-6 lg:gap-8 items-start">
           {/* Left Column: Navigation / Context */}
           <div className="space-y-6 lg:sticky lg:top-4">
-            <RepositoriesCard repos={activeRepos} />
+            <RepositoriesCard
+              repos={activeRepos}
+              ownedOrgs={ownedOrgs.map((org) => ({ id: org.id, name: org.name, slug: org.slug }))}
+            />
             <OrganizationsCard organizations={userOrgs} />
           </div>
 

@@ -43,6 +43,43 @@ export async function isOrgMember(orgId: string, userId: string): Promise<boolea
   return !!membership;
 }
 
+/**
+ * Check if user is owner of an organization
+ *
+ * Owners have full admin rights including:
+ * - Claiming repos for the org
+ * - Managing repo settings
+ * - Creating/revoking Access Keys
+ */
+export async function isOrgOwner(orgId: string, userId: string): Promise<boolean> {
+  const membership = await db.query.member.findFirst({
+    where: and(
+      eq(member.organizationId, orgId),
+      eq(member.userId, userId),
+      eq(member.role, 'owner')
+    ),
+  });
+  return !!membership;
+}
+
+/**
+ * Get all organizations where user is an owner
+ *
+ * Used for org selector in claim flow (only owners can claim repos for orgs)
+ */
+export async function getUserOwnedOrgs(userId: string) {
+  const { organization } = await import('@/db/schema/auth');
+
+  const memberships = await db.query.member.findMany({
+    where: and(eq(member.userId, userId), eq(member.role, 'owner')),
+    with: {
+      organization: true,
+    },
+  });
+
+  return memberships.map((m) => m.organization);
+}
+
 // ============================================================================
 // ORG ACCESS KEYS
 // ============================================================================

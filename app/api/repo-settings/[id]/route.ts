@@ -1,7 +1,7 @@
 import { getBountiesByGithubRepoId } from '@/db/queries/bounties';
 import {
   getRepoSettingsByGithubRepoId,
-  isUserRepoOwner,
+  canManageRepo,
   updateRepoSettings,
   type RepoSettingsUpdate,
 } from '@/db/queries/repo-settings';
@@ -104,9 +104,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Invalid repo ID' }, { status: 400 });
     }
 
-    // Verify user is the repo owner
-    const isOwner = await isUserRepoOwner(BigInt(githubRepoId), session.user.id);
-    if (!isOwner) {
+    // Verify user can manage this repo (owner or org owner)
+    const canManage = await canManageRepo(BigInt(githubRepoId), session.user.id);
+    if (!canManage) {
       return NextResponse.json(
         { error: 'Only the repo owner can update settings' },
         { status: 403 }

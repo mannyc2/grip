@@ -12,6 +12,7 @@ import { installationOctokit } from './index';
 
 export interface ClaimState {
   userId: string;
+  organizationId: string | null; // Org claiming the repo (null = personal claim)
   owner: string;
   repo: string;
   timestamp: number;
@@ -106,18 +107,24 @@ export function verifyClaimState(signedState: string): ClaimState | null {
 
   // Decode and validate state
   try {
-    const state = JSON.parse(Buffer.from(data, 'base64url').toString()) as ClaimState;
+    const parsed = JSON.parse(Buffer.from(data, 'base64url').toString());
 
     // Check expiration
-    if (Date.now() - state.timestamp > STATE_EXPIRY_MS) {
+    if (Date.now() - parsed.timestamp > STATE_EXPIRY_MS) {
       console.log('[github-app] State expired');
       return null;
     }
 
     // Validate required fields
-    if (!state.userId || !state.owner || !state.repo || !state.timestamp) {
+    if (!parsed.userId || !parsed.owner || !parsed.repo || !parsed.timestamp) {
       return null;
     }
+
+    // Normalize organizationId (old states may not have it)
+    const state: ClaimState = {
+      ...parsed,
+      organizationId: parsed.organizationId ?? null,
+    };
 
     return state;
   } catch {

@@ -2,6 +2,7 @@ import {
   createRepoSettings,
   getRepoSettingsByName,
   updateRepoInstallation,
+  type UpdateRepoInstallationOwner,
 } from '@/db/queries/repo-settings';
 import { getSession } from '@/lib/auth/auth-server';
 import { fetchGitHubRepo, getInstallationRepos, verifyClaimState } from '@/lib/github';
@@ -127,20 +128,31 @@ export async function GET(request: NextRequest) {
   try {
     const existing = await getRepoSettingsByName(claimState.owner, claimState.repo);
 
+    // Determine owner based on claim context (user or org)
+    const owner: UpdateRepoInstallationOwner = claimState.organizationId
+      ? { type: 'organization', organizationId: claimState.organizationId }
+      : { type: 'user', userId: session.user.id };
+
+    const ownerLabel = claimState.organizationId ? `org:${claimState.organizationId}` : session.user.id;
+
     if (existing) {
       // Update existing record
-      await updateRepoInstallation(existing.githubRepoId, installationId, session.user.id);
-      console.log(`[github-callback] Updated repo_settings for ${targetFullName}`);
+      await updateRepoInstallation(existing.githubRepoId, installationId, owner);
+      console.log(`[github-callback] Updated repo_settings for ${targetFullName} (owner: ${ownerLabel})`);
     } else {
-      // Create new record
+      // Create new record with appropriate owner fields
+      const ownerFields = claimState.organizationId
+        ? { verifiedOwnerOrganizationId: claimState.organizationId }
+        : { verifiedOwnerUserId: session.user.id };
+
       await createRepoSettings({
-        verifiedOwnerUserId: session.user.id,
+        ...ownerFields,
         githubRepoId: BigInt(githubRepo.id),
         githubOwner: claimState.owner,
         githubRepo: claimState.repo,
         installationId: BigInt(installationId),
       });
-      console.log(`[github-callback] Created repo_settings for ${targetFullName}`);
+      console.log(`[github-callback] Created repo_settings for ${targetFullName} (owner: ${ownerLabel})`);
     }
   } catch (error) {
     console.error('[github-callback] Failed to create/update repo_settings:', error);

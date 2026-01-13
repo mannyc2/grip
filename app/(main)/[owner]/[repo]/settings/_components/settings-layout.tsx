@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { GeneralSettings } from './general-settings';
 import { TreasurySettings } from './treasury-settings';
 import { WebhookSettings } from './webhook-settings';
+import { TransferOwnership } from './transfer-ownership';
 
 interface SettingsLayoutProps {
   githubRepoId: number;
@@ -40,6 +41,9 @@ export function SettingsLayout({ githubRepoId, owner, repo }: SettingsLayoutProp
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="treasury">Treasury</TabsTrigger>
           <TabsTrigger value="webhooks">Webhooks</TabsTrigger>
+          <TabsTrigger value="danger" className="text-destructive data-[state=active]:text-destructive">
+            Danger Zone
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general">
@@ -52,6 +56,10 @@ export function SettingsLayout({ githubRepoId, owner, repo }: SettingsLayoutProp
 
         <TabsContent value="webhooks">
           <WebhookSettings githubRepoId={githubRepoId} />
+        </TabsContent>
+
+        <TabsContent value="danger">
+          <TransferOwnership githubRepoId={githubRepoId} owner={owner} repo={repo} />
         </TabsContent>
       </Tabs>
     </div>

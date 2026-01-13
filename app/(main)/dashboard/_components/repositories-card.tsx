@@ -6,13 +6,14 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/
 import { FolderGit2, Plus } from 'lucide-react';
 import Link from 'next/link';
 import type { ActiveRepo } from '@/db/queries/bounties';
-import { AddRepoModal } from './add-repo-modal';
+import { AddRepoModal, type OwnedOrg } from './add-repo-modal';
 
 type RepositoriesCardProps = {
   repos: ActiveRepo[];
+  ownedOrgs?: OwnedOrg[];
 };
 
-export function RepositoriesCard({ repos }: RepositoriesCardProps) {
+export function RepositoriesCard({ repos, ownedOrgs = [] }: RepositoriesCardProps) {
   const [showAddModal, setShowAddModal] = useState(false);
 
   return (
@@ -56,7 +57,7 @@ export function RepositoriesCard({ repos }: RepositoriesCardProps) {
           ))
         )}
       </div>
-      <AddRepoModal open={showAddModal} onOpenChange={setShowAddModal} />
+      <AddRepoModal open={showAddModal} onOpenChange={setShowAddModal} ownedOrgs={ownedOrgs} />
     </div>
   );
 }

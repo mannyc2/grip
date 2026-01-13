@@ -172,11 +172,15 @@ export const repoSettings = pgTable(
     githubOwner: varchar('github_owner', { length: 39 }).notNull(),
     githubRepo: varchar('github_repo', { length: 100 }).notNull(),
 
-    // Repo owner verification
+    // Repo owner verification (XOR: user OR org, never both)
     requireOwnerApproval: boolean('require_owner_approval').notNull().default(false),
     verifiedOwnerUserId: text('verified_owner_user_id').references(() => user.id, {
       onDelete: 'set null',
     }),
+    verifiedOwnerOrganizationId: text('verified_owner_organization_id').references(
+      () => organization.id,
+      { onDelete: 'set null' }
+    ),
     verifiedAt: timestamp('verified_at', { mode: 'string' }),
 
     // GitHub webhook (optional, legacy per-repo webhooks)
@@ -188,6 +192,8 @@ export const repoSettings = pgTable(
 
     // Auto-pay setting (requires active Access Key to function)
     autoPayEnabled: boolean('auto_pay_enabled').notNull().default(false),
+    // Access Key for org-owned repos auto-pay (user-owned repos use user's passkey)
+    autoPayAccessKeyId: text('auto_pay_access_key_id'),
 
     // Bounty defaults
     defaultExpirationDays: integer('default_expiration_days'),
@@ -213,8 +219,15 @@ export const repoSettings = pgTable(
   },
   (table) => ({
     idxRepoSettingsOwner: index('idx_repo_settings_owner').on(table.verifiedOwnerUserId),
+    idxRepoSettingsOrgOwner: index('idx_repo_settings_org_owner').on(
+      table.verifiedOwnerOrganizationId
+    ),
     idxRepoSettingsName: index('idx_repo_settings_name').on(table.githubOwner, table.githubRepo),
     idxRepoSettingsInstallation: index('idx_repo_settings_installation').on(table.installationId),
+    // XOR constraint: at most one owner (user OR org), both null = unclaimed
+    chkRepoOwnerXor: sql`CHECK (
+      ${table.verifiedOwnerUserId} IS NULL OR ${table.verifiedOwnerOrganizationId} IS NULL
+    )`,
   })
 );
 

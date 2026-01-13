@@ -1,4 +1,4 @@
-import { getRepoSettingsByName, isUserRepoOwner } from '@/db/queries/repo-settings';
+import { getRepoSettingsByName, canManageRepo } from '@/db/queries/repo-settings';
 import { getSession } from '@/lib/auth/auth-server';
 import { redirect } from 'next/navigation';
 import { AutoClaim } from './_components/auto-claim';
@@ -43,9 +43,9 @@ export default async function SettingsPage({ params, searchParams }: SettingsPag
     );
   }
 
-  // Check permissions - must be repo owner
-  const isOwner = await isUserRepoOwner(repoSettings.githubRepoId, session.user.id);
-  if (!isOwner) {
+  // Check permissions - must be repo owner or org owner
+  const canManage = await canManageRepo(repoSettings.githubRepoId, session.user.id);
+  if (!canManage) {
     redirect(`/${owner}/${repo}`);
   }
 

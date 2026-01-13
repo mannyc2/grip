@@ -1,19 +1,28 @@
 import { bounties, db, repoSettings } from '@/db';
 import { and, desc, eq, sql } from 'drizzle-orm';
+import { isOrgOwner } from './organizations';
+
+// Owner types for XOR pattern (user OR org, never both)
+export type RepoOwner =
+  | { type: 'user'; userId: string }
+  | { type: 'organization'; organizationId: string }
+  | { type: 'unclaimed' };
 
 export type CreateRepoSettingsInput = {
-  verifiedOwnerUserId: string;
   githubRepoId: bigint | string;
   githubOwner: string;
   githubRepo: string;
   installationId?: bigint | string;
+  // XOR: provide one or the other, not both
+  verifiedOwnerUserId?: string;
+  verifiedOwnerOrganizationId?: string;
 };
 
 /**
  * Create repo settings (repo owner verification)
  *
- * Only verified GitHub repo owners can create settings.
- * This enables requireOwnerApproval flag for their repo.
+ * Verified repo owners (user OR org) can create settings.
+ * XOR constraint enforced at DB level: exactly one owner type can be set.
  */
 export async function createRepoSettings(input: CreateRepoSettingsInput) {
   const githubRepoId =
@@ -31,7 +40,8 @@ export async function createRepoSettings(input: CreateRepoSettingsInput) {
       githubRepoId,
       githubOwner: input.githubOwner,
       githubRepo: input.githubRepo,
-      verifiedOwnerUserId: input.verifiedOwnerUserId,
+      verifiedOwnerUserId: input.verifiedOwnerUserId ?? null,
+      verifiedOwnerOrganizationId: input.verifiedOwnerOrganizationId ?? null,
       verifiedAt: new Date().toISOString(),
       installationId,
     })
@@ -111,6 +121,7 @@ export async function updateRepoSettings(
  * Check if user is verified owner of repo
  *
  * Used for permission checks in settings pages and approval flows.
+ * @deprecated Use canManageRepo() for org-aware permission checks
  */
 export async function isUserRepoOwner(
   githubRepoId: bigint | string,
@@ -118,6 +129,68 @@ export async function isUserRepoOwner(
 ): Promise<boolean> {
   const settings = await getRepoSettingsByGithubRepoId(githubRepoId);
   return settings?.verifiedOwnerUserId === userId;
+}
+
+/**
+ * Check if user can manage a repository's settings
+ *
+ * Returns true if:
+ * - User directly owns the repo (verifiedOwnerUserId), OR
+ * - User is owner of the org that owns the repo (verifiedOwnerOrganizationId)
+ */
+export async function canManageRepo(
+  githubRepoId: bigint | string,
+  userId: string
+): Promise<boolean> {
+  const settings = await getRepoSettingsByGithubRepoId(githubRepoId);
+  if (!settings) return false;
+
+  // Direct user ownership
+  if (settings.verifiedOwnerUserId === userId) {
+    return true;
+  }
+
+  // Organization ownership - check if user is org owner
+  if (settings.verifiedOwnerOrganizationId) {
+    return await isOrgOwner(settings.verifiedOwnerOrganizationId, userId);
+  }
+
+  return false;
+}
+
+/**
+ * Get the owner identity for a repo
+ *
+ * Returns discriminated union: user | organization | unclaimed
+ */
+export async function getRepoOwner(githubRepoId: bigint | string): Promise<RepoOwner> {
+  const settings = await getRepoSettingsByGithubRepoId(githubRepoId);
+
+  if (!settings) {
+    return { type: 'unclaimed' };
+  }
+
+  if (settings.verifiedOwnerUserId) {
+    return { type: 'user', userId: settings.verifiedOwnerUserId };
+  }
+
+  if (settings.verifiedOwnerOrganizationId) {
+    return { type: 'organization', organizationId: settings.verifiedOwnerOrganizationId };
+  }
+
+  return { type: 'unclaimed' };
+}
+
+/**
+ * Get all repos owned by an organization (proper FK query)
+ *
+ * Replaces string matching on githubOwner with proper FK relationship.
+ */
+export async function getOrgOwnedRepos(orgId: string) {
+  return db
+    .select()
+    .from(repoSettings)
+    .where(eq(repoSettings.verifiedOwnerOrganizationId, orgId));
 }
 
 /**
@@ -145,8 +218,10 @@ export async function unclaimReposByInstallationId(installationId: bigint | stri
     .update(repoSettings)
     .set({
       verifiedOwnerUserId: null,
+      verifiedOwnerOrganizationId: null,
       installationId: null,
       verifiedAt: null,
+      autoPayAccessKeyId: null,
     })
     .where(eq(repoSettings.installationId, installationIdBigInt))
     .returning();
@@ -167,8 +242,47 @@ export async function unclaimRepoByGithubRepoId(githubRepoId: bigint | string) {
     .update(repoSettings)
     .set({
       verifiedOwnerUserId: null,
+      verifiedOwnerOrganizationId: null,
       installationId: null,
       verifiedAt: null,
+      autoPayAccessKeyId: null,
+    })
+    .where(eq(repoSettings.githubRepoId, repoIdBigInt))
+    .returning();
+
+  return updated ?? null;
+}
+
+export type UpdateRepoInstallationOwner =
+  | { type: 'user'; userId: string }
+  | { type: 'organization'; organizationId: string };
+
+/**
+ * Update repo settings with installation ID and verified owner
+ *
+ * Used when claiming a repo via GitHub App installation.
+ * Supports both user and org ownership (XOR pattern).
+ */
+export async function updateRepoInstallation(
+  githubRepoId: bigint | string,
+  installationId: bigint | string,
+  owner: UpdateRepoInstallationOwner
+) {
+  const repoIdBigInt = typeof githubRepoId === 'string' ? BigInt(githubRepoId) : githubRepoId;
+  const installationIdBigInt =
+    typeof installationId === 'string' ? BigInt(installationId) : installationId;
+
+  const ownerFields =
+    owner.type === 'user'
+      ? { verifiedOwnerUserId: owner.userId, verifiedOwnerOrganizationId: null }
+      : { verifiedOwnerUserId: null, verifiedOwnerOrganizationId: owner.organizationId };
+
+  const [updated] = await db
+    .update(repoSettings)
+    .set({
+      installationId: installationIdBigInt,
+      ...ownerFields,
+      verifiedAt: new Date().toISOString(),
     })
     .where(eq(repoSettings.githubRepoId, repoIdBigInt))
     .returning();
@@ -177,24 +291,27 @@ export async function unclaimRepoByGithubRepoId(githubRepoId: bigint | string) {
 }
 
 /**
- * Update repo settings with installation ID and verified owner
+ * Transfer repo ownership between user and org
  *
- * Used when claiming a repo via GitHub App installation.
+ * Clears the previous owner and sets the new one.
+ * Also clears autoPayAccessKeyId to force reconfiguration.
  */
-export async function updateRepoInstallation(
+export async function transferRepoOwnership(
   githubRepoId: bigint | string,
-  installationId: bigint | string,
-  verifiedOwnerUserId: string
+  newOwner: UpdateRepoInstallationOwner
 ) {
   const repoIdBigInt = typeof githubRepoId === 'string' ? BigInt(githubRepoId) : githubRepoId;
-  const installationIdBigInt =
-    typeof installationId === 'string' ? BigInt(installationId) : installationId;
+
+  const ownerFields =
+    newOwner.type === 'user'
+      ? { verifiedOwnerUserId: newOwner.userId, verifiedOwnerOrganizationId: null }
+      : { verifiedOwnerUserId: null, verifiedOwnerOrganizationId: newOwner.organizationId };
 
   const [updated] = await db
     .update(repoSettings)
     .set({
-      installationId: installationIdBigInt,
-      verifiedOwnerUserId,
+      ...ownerFields,
+      autoPayAccessKeyId: null,
       verifiedAt: new Date().toISOString(),
     })
     .where(eq(repoSettings.githubRepoId, repoIdBigInt))

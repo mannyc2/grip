@@ -1,5 +1,5 @@
 import { getCommittedBalanceByRepoId } from '@/db/queries/bounties';
-import { getRepoSettingsByGithubRepoId, isUserRepoOwner } from '@/db/queries/repo-settings';
+import { getRepoSettingsByGithubRepoId, canManageRepo } from '@/db/queries/repo-settings';
 import { auth } from '@/lib/auth/auth';
 import { requireAuth } from '@/lib/auth/auth-server';
 import { tempoClient } from '@/lib/tempo/client';
@@ -38,9 +38,9 @@ export async function GET(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Repo settings not found' }, { status: 404 });
     }
 
-    // Check user is repo owner
-    const isOwner = await isUserRepoOwner(BigInt(githubRepoId), session.user.id);
-    if (!isOwner) {
+    // Check user can manage repo (owner or org owner)
+    const canManage = await canManageRepo(BigInt(githubRepoId), session.user.id);
+    if (!canManage) {
       return NextResponse.json(
         { error: 'You do not have access to this repo treasury' },
         { status: 403 }
@@ -133,9 +133,9 @@ export async function POST(_request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: 'Repo settings not found' }, { status: 404 });
     }
 
-    // Check user is repo owner
-    const isOwner = await isUserRepoOwner(BigInt(githubRepoId), session.user.id);
-    if (!isOwner) {
+    // Check user can manage repo (owner or org owner)
+    const canManage = await canManageRepo(BigInt(githubRepoId), session.user.id);
+    if (!canManage) {
       return NextResponse.json(
         { error: 'You do not have permission to manage this repo treasury' },
         { status: 403 }
