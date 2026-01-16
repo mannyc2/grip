@@ -2,7 +2,7 @@
 
 import { Card, CardContent } from '@/components/ui/card';
 import { Empty, EmptyMedia, EmptyTitle, EmptyDescription } from '@/components/ui/empty';
-import type { AccessKey } from '@/lib/auth/tempo-plugin/types';
+import type { AccessKey } from 'better-auth-tempo';
 import { Key } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';

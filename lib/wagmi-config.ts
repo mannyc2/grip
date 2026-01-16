@@ -17,7 +17,7 @@
 import { defineChain } from 'viem';
 import { http, createConfig } from 'wagmi';
 import { webAuthn } from 'wagmi/tempo';
-import { createTempoKeyManager } from '@/lib/auth/tempo-plugin/client';
+import { createTempoKeyManager } from 'better-auth-tempo/client';
 import { authClient } from '@/lib/auth/auth-client';
 
 /**

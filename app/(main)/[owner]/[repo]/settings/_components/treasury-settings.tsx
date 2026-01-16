@@ -7,7 +7,7 @@ import { AddressDisplay } from '@/components/tempo/address-display';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { authClient } from '@/lib/auth/auth-client';
-import type { AccessKey } from '@/lib/auth/tempo-plugin/types';
+import type { AccessKey } from 'better-auth-tempo';
 import { ExternalLink, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';

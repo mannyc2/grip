@@ -4,7 +4,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { authClient } from '@/lib/auth/auth-client';
-import type { AccessKey } from '@/lib/auth/tempo-plugin/types';
+import type { AccessKey } from 'better-auth-tempo';
 import { AlertCircle, ChevronRight, Key, Shield } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';

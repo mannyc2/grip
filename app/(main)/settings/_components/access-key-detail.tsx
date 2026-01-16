@@ -14,7 +14,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
-import type { AccessKey } from '@/lib/auth/tempo-plugin/types';
+import type { AccessKey } from 'better-auth-tempo';
 import { ArrowLeft, Key, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';

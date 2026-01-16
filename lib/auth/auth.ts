@@ -14,7 +14,7 @@ import { getUserOrgMembership } from '@/lib/github';
 import { organization as organizationTable } from '@/db/schema/auth';
 import { syncGitHubMembers } from '@/lib/organization/sync';
 import { ac, billingAdmin, bountyManager, member, owner } from './permissions';
-import { tempo } from './tempo-plugin';
+import { tempo } from 'better-auth-tempo';
 
 /**
  * better-auth server configuration

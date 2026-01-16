@@ -9,7 +9,7 @@ import { authClient } from '@/lib/auth/auth-client';
 import { getChainId } from '@/lib/network';
 import { config } from '@/lib/wagmi-config';
 import type { PasskeyOperationError, PasskeyPhase } from '@/lib/webauthn';
-import type { AccessKey } from '@/lib/auth/tempo-plugin/types';
+import type { AccessKey } from 'better-auth-tempo';
 import { useCallback, useState } from 'react';
 
 type CreateAccessKeyModalProps = {

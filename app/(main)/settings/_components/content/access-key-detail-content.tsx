@@ -1,4 +1,4 @@
-import type { AccessKey } from '@/lib/auth/tempo-plugin/types';
+import type { AccessKey } from 'better-auth-tempo';
 import { AccessKeyDetail } from '../access-key-detail';
 
 export interface AccessKeyDetailContentProps {

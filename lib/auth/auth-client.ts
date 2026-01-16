@@ -1,7 +1,7 @@
 import { createAuthClient } from 'better-auth/react';
 import { inferOrgAdditionalFields, organizationClient } from 'better-auth/client/plugins';
 import { ac, billingAdmin, bountyManager, member, owner } from './permissions';
-import { tempoClient } from './tempo-plugin/client';
+import { tempoClient } from 'better-auth-tempo/client';
 import type { auth } from './auth';
 
 /**
