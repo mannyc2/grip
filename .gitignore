@@ -41,6 +41,13 @@ next-env.d.ts
 # If drizzle/ is ignored, the migration check hooks are useless
 # drizzle/
 
+# Turbo
+.turbo/
+
+# Foundry
+packages/contracts/cache/
+packages/contracts/out/
+
 # Misc
 *.log
 
